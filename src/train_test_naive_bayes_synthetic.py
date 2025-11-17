@@ -1,15 +1,11 @@
 #src/train_test_naive_bayes_synthetic.py
 '''Train and evaluate Naive Bayes Classifier on Synthetic Data'''
 
-from src.utils.data_loader import synthetic_data_loader
+from src.utils.data_loader import prepare_synthetic_data
 
-from src.utils.synthetic_data import (
-    GENRES,
-    generate_synthetic_movies,
-    train_val_test_split,
-)
+from src.utils.synthetic_data import GENRES
 from src.utils.evaluation import evaluate_model
-from src.models.naive_bayes import NaiveBayesGenreClassifier
+from src.models.naive_bayes import NaiveBayesClassifier
 # ---------------------------------------------------------------------------
 # Load CSV
 # ---------------------------------------------------------------------------
@@ -21,7 +17,7 @@ CSV_PATH = 'data/synthetic/synthetic_movies.csv'
 def main() -> None:
     #1) Load synthetic data
     print("Loading synthetic dataset...")
-    splits = synthetic_data_loader(CSV_PATH)
+    splits = prepare_synthetic_data(CSV_PATH)
 
     X_train, y_train = splits["train"]
     X_val, y_val = splits["val"]
