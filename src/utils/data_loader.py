@@ -94,7 +94,7 @@ def _map_tags_to_genres(tags):
     
     return mapped
 # ---------------------------------------------------------------------------
-def prepare_mpst_data(
+def prepare_mpst_data_single_genre(
         mpst_csv_path,
         partition_json_path,
         target_genres,
@@ -135,6 +135,9 @@ def prepare_mpst_data(
     if drop_multi_genre:
         df = df[df['n_genres'] == 1].copy()
     
+    #Single genre
+    df["single_genre"] = df["mapped_genres"].apply(lambda s: next(iter(s)))
+    
     #5) Load partition JSON to make splits
     with open(partition_json_path, 'r') as f:
         partitions = json.load(f)
@@ -153,14 +156,14 @@ def prepare_mpst_data(
     test_df = df[df['imdb_id'].isin(test_ids)]
 
     #Make (synopses, genres) lists for each split
-    def to_synopsis_genre_lists(sub_df):
+    def to_xy(sub_df):
         synopses = sub_df['plot_synopsis'].astype(str).tolist()
-        genres = sub_df['tags'].astype(str).tolist()
+        genres = sub_df['single_genre'].astype(str).tolist()
         return synopses, genres
 
-    X_train, y_train = to_synopsis_genre_lists(train_df)
-    X_val,   y_val   = to_synopsis_genre_lists(val_df)
-    X_test,  y_test  = to_synopsis_genre_lists(test_df)
+    X_train, y_train = to_xy(train_df)
+    X_val,   y_val   = to_xy(val_df)
+    X_test,  y_test  = to_xy(test_df)
 
     return {
         'train': (X_train, y_train),
@@ -172,45 +175,35 @@ def prepare_mpst_data(
 # Synthetic Data Loader
 # ---------------------------------------------------------------------------
 def prepare_synthetic_data(
-        num_docs_per_genre: int=200,
-        genres: List[str] | None=None,
-        min_len: int=12,
-        max_len: int=36,
-        seed: int=42,
+        synthetic_csv_path,
         train_frac: float=0.7,
         val_frac: float=0.15,
+        seed: int=42
 ):
     '''
-    Generate synthetic movie data, return train/val/test splits
+    Given an existing synthetic csv path, create train/val/test splits
     
-    Returns:
-    splits : dict
-        {
-          'train': (X_train, y_train),
-          'val':   (X_val,   y_val),
-          'test':  (X_test,  y_test),
-        }
+    Default split:
+    - Train = 70%
+    - Val = 15%
+    - Test = 15%
     '''
-    if genres is None:
-        genres = SYNTH_GENRES
-    
-    synopses, genres = generate_synthetic_data(
-        num_docs_per_genre = num_docs_per_genre, 
-        genres=genres,
-        min_len=min_len,
-        max_len=max_len,
-        seed=seed
-    )
+    #1) Load synthetic CSV
+    df = pd.read_csv(synthetic_csv_path)
+
+    #2) Turn into train/val/test splits
+    synopses = df["synopsis"].astype(str).tolist()
+    labels = df["genre"].astype(str).tolist()
 
     #Clean text
     synopses = [clean_text(syn) for syn in synopses]
 
     split_dict = train_val_test_split(
         synopses,
-        genres,
+        labels,
         train_frac=train_frac,
         val_frac=val_frac,
-        seed=seed
+        seed=seed,
     )
 
     return split_dict
@@ -220,9 +213,10 @@ def prepare_synthetic_data(
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     #Synthetic sanity check
-    synth_splits = prepare_synthetic_data(num_docs_per_genre=5)
-    X_train, y_train = synth_splits["train"]
-    print("Synthetic train size:", len(X_train))
-    print("Example synthetic sample:")
-    print("  text:", X_train[0])
-    print("  label:", y_train[0])
+    #synth_splits = prepare_synthetic_data(num_docs_per_genre=5)
+    #X_train, y_train = synth_splits["train"]
+    #print("Synthetic train size:", len(X_train))
+    #print("Example synthetic sample:")
+    #print("  text:", X_train[0])
+    #print("  label:", y_train[0])
+    print()

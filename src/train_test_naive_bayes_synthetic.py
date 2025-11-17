@@ -9,7 +9,7 @@ from src.models.naive_bayes import NaiveBayesClassifier
 # ---------------------------------------------------------------------------
 # Load CSV
 # ---------------------------------------------------------------------------
-CSV_PATH = 'data/synthetic/synthetic_movies.csv'
+CSV_PATH = 'data/synthetic/synthetic_movie_synopses.csv'
 
 # ---------------------------------------------------------------------------
 # Main loop
@@ -17,7 +17,11 @@ CSV_PATH = 'data/synthetic/synthetic_movies.csv'
 def main() -> None:
     #1) Load synthetic data
     print("Loading synthetic dataset...")
-    splits = prepare_synthetic_data(CSV_PATH)
+    splits = prepare_synthetic_data(
+        CSV_PATH,
+        train_frac=0.7,
+        val_frac=0.15,
+        seed=42)
 
     X_train, y_train = splits["train"]
     X_val, y_val = splits["val"]
@@ -29,7 +33,7 @@ def main() -> None:
     print("-" * 50)
 
     # 3) Train Naive Bayes on synthetic training data
-    model = NaiveBayesGenreClassifier(alpha=1.0)
+    model = NaiveBayesClassifier(alpha=1.0)
     print("Training Naive Bayes on synthetic data...")
     model.fit(X_train, y_train)
     print("Training complete.")

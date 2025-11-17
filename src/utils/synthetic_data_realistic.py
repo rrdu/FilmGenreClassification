@@ -1,4 +1,4 @@
-#src/utils/synthetic_data.py
+#src/utils/synthetic_data_realistic.py
 '''Generates synthetic movie synopsis data for Naive Bayes'''
 
 import random
@@ -9,6 +9,13 @@ from typing import List, Tuple, Dict
 #Create genre vocab
 # ---------------------------------------------------------------------------
 GENRES = ['action', 'comedy', 'drama','fantasy', 'horror', 'romance', 'sci-fi']
+
+MPST_LIKE_NEUTRAL_WORDS = [
+    "family", "friends", "town", "city", "home", "school", "police",
+    "secret", "mysterious", "dark", "strange", "danger", "past",
+    "future", "truth", "lies", "relationship", "life", "death",
+    "escape", "plan", "crime", "memory", "dream", "night", "day",
+]
 
 COMMON_WORDS = [
     'movie', 'story', 'character', 
@@ -59,7 +66,9 @@ GENRE_WORDS = {
 GENRE_WEIGHTS = {}
 
 def make_genre_weights():
-    '''Make probability distributions of each word given a genre'''
+    '''Make probability distributions of each word given a genre
+    - More realistic version that aligns with MPST
+    '''
     global GENRE_WEIGHTS
 
     #Get full vocab
@@ -84,21 +93,23 @@ def make_genre_weights():
 make_genre_weights()
 
 # ---------------------------------------------------------------------------
-# Make synthetic data
+# Make synthetic data (MPST-like)
 # ---------------------------------------------------------------------------
-def generate_synthetic_data(
+def generate_synthetic_data_mpst(
         num_docs_per_genre: int=200, 
         genres: List[str] | None=None,
-        min_len: int=12,
-        max_len: int=36,
+        min_len: int=50,
+        max_len: int=150,
         seed: int=42,
 ):
     '''Genereate synthetic movie synopsis data with genre labels
+    - More MPST-like
     
     Each synopsis:
     - Has a genre
+    - Longer plots
     - Has length between [min_len, max_len]
-    - Draws words i.i.d from P(word | genre)
+    - Mix of main-genre words, neutral words, cross-genre words
     
     Returns:
     - texts: List[str] - list of synthetic synopses
@@ -114,40 +125,54 @@ def generate_synthetic_data(
     synopses = []
     genres = []
 
+    #Neutral words
+    neutral_pool = COMMON_WORDS + MPST_LIKE_NEUTRAL_WORDS
+
+    #Make 'other genres' pool for each genre
+    other_genre_vocab = {}
     for genre in genres:
-        #Get vocab and probabilities for current genre
-        vocab = list(GENRE_WEIGHTS[genre].keys())
-        probs = list(GENRE_WEIGHTS[genre][word] for word in vocab)
+        others = [og for og in genres if og != g]
+        words = []
+        for og in others:
+            words.extend(GENRE_WORDS[og])
+        other_genre_vocab[genre] = words
+
+    for genre in genres:
+        main_vocab = GENRE_WORDS[genre]
+        other_vocab = other_genre_vocab[genre]
 
         for _ in range(num_docs_per_genre):
             #Sample length
             synopsis_len = random.randint(min_len, max_len)
+            tokens = []
 
-            #Sample words i.i.d
-            words = random.choices(vocab, weights=probs, k=synopsis_len)
+            for _pos in range(synopsis_len):
+                r = random.random()
+                if r < 0.6: #Main genre word
+                    tokens.append(random.choice(main_vocab))
+                elif r < 0.8: #Neutral/shared word
+                    tokens.append(random.choice(neutral_pool))
+                else: #Cross-genre word
+                    tokens.append(random.choice(other_vocab))
 
-            #Create synopsis text
-            synopsis = ' '.join(words)
-
-            #Add synopsis and label to lists
-            synopses.append(synopsis)
+            synopses.append(' '.join(tokens))
             genres.append(genre)
     
     return synopses, genres
 # ---------------------------------------------------------------------------
-# Save synthetic data to CSV
+# Save synthetic data to CSV (MPST-like)
 # ---------------------------------------------------------------------------
-def generate_synthetic_csv(
+def generate_synthetic_mpst_csv(
         filepath: str,
         num_docs_per_genre: int=200,
         genres: List[str] | None=None,
-        min_len: int=12,
-        max_len: int=36,
+        min_len: int=50,
+        max_len: int=150,
         seed: int=42,
         save_path: str | None=None,
 ):
     '''Generate synthetic data and save to CSV file'''
-    synopses, genres = generate_synthetic_data(
+    synopses, genres = generate_synthetic_data_mpst(
         num_docs_per_genre=num_docs_per_genre,
         genres=genres,
         min_len=min_len,
@@ -172,8 +197,8 @@ def generate_synthetic_csv(
 # ---------------------------------------------------------------------------
 if __name__ == '__main__':
     #Generate and save CSV of synthetic data
-    df = generate_synthetic_csv(
-        filepath='synthetic_movie_synopses.csv',
+    df = generate_synthetic_mpst_csv(
+        filepath='synthetic_movie_synopses_mpst.csv',
         num_docs_per_genre=200,
-        save_path='synthetic_movie_synopses.csv'
+        save_path='synthetic_movie_synopses_mpst.csv'
     )

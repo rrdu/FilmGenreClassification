@@ -5,7 +5,7 @@ import argparse
 from pathlib import Path
 
 from src.utils.data_loader import(
-    prepare_mpst_data,
+    prepare_mpst_data_single_genre,
     TARGET_GENRES
 )
 
@@ -60,7 +60,7 @@ def main():
     print('--------------------------------------------')
 
     #1) Load MPST splits
-    mpst_splits = prepare_mpst_data(
+    mpst_splits = prepare_mpst_data_single_genre(
         mpst_csv_path=str(mpst_csv_path),
         partition_json_path=str(partition_json_path),
         target_genres=TARGET_GENRES,
@@ -71,6 +71,7 @@ def main():
     X_val, y_val = mpst_splits['val']
     X_test, y_test = mpst_splits['test']
     print(f'Train size: {len(X_train)}')
+    print("Unique labels in train:", len(set(y_train)))
     print(f'Val size:   {len(X_val)}')
     print(f'Test size:  {len(X_test)}')
     print('--------------------------------------------')
