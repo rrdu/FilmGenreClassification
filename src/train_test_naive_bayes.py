@@ -81,6 +81,7 @@ def main():
     nb_model.fit(X_train, y_train)
     print('Training complete.')
 
+
     #3) Evaluate on validation set
     print('Validating Naive Bayes model...')
     evaluate_model(

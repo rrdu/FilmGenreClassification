@@ -5,6 +5,7 @@ import math
 
 from collections import Counter, defaultdict
 from typing import List, Dict, Tuple
+from collections import Counter
 
 class NaiveBayesClassifier:
     '''
@@ -92,19 +93,22 @@ class NaiveBayesClassifier:
         if not self.fitted:
             raise RuntimeError('Fit model before predicting')
         
-        #Tokenize synopses
+        #Tokenize synopses and count
         tokens = self._tokenize(synopses)
+        token_counts= Counter(tokens)
 
-        #For each genre, first calculate log P(genre)
-        log_posteriors = {}
+        log_posteriors = dict(self.class_priors_log)
+
+        #For each genre, accumulate count * log P(word | genre)
         for genre, prior_log in self.class_priors_log.items():
-            log_posteriors[genre] = prior_log
-        
-        #Add sum of log P(word | genre) for each word in synopsis
-        for token in tokens:
-            for genre in log_posteriors:
-                if token in self.word_log_probs[genre]:
-                    log_posteriors[genre] += self.word_log_probs[genre][token]
+            log_prob_words = self.word_log_probs[genre]
+            s = 0.0
+            for token, count in token_counts.items():
+                #Ignore unseen tokens
+                lp = log_prob_words.get(token)
+                if lp is not None:
+                    s += lp * count
+            log_posteriors[genre] = prior_log + s
 
         return log_posteriors
     # ---------------------------------------------------------------------------
