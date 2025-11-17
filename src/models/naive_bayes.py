@@ -101,13 +101,11 @@ class NaiveBayesClassifier:
             log_posteriors[genre] = prior_log
         
         #Add sum of log P(word | genre) for each word in synopsis
-        for genre in log_posteriors.keys():
-            log_prob_words = self.word_log_probs[genre]
-            for token in tokens:
-                #Ignore tokens not in vocab
-                if token in log_prob_words:
-                    log_posteriors[genre] += log_prob_words[token]
-        
+        for token in tokens:
+            for genre in log_posteriors:
+                if token in self.word_log_probs[genre]:
+                    log_posteriors[genre] += self.word_log_probs[genre][token]
+
         return log_posteriors
     # ---------------------------------------------------------------------------
     def predict_proba(self, synopses):

@@ -147,7 +147,7 @@ def generate_synthetic_csv(
         save_path: str | None=None,
 ):
     '''Generate synthetic data and save to CSV file'''
-    synopses, labels = generate_synthetic_data(
+    synopses, genres = generate_synthetic_data(
         num_docs_per_genre=num_docs_per_genre,
         genres=genres,
         min_len=min_len,
@@ -158,7 +158,7 @@ def generate_synthetic_csv(
     #Create DataFrame
     df = pd.DataFrame({
         'synopsis': synopses,
-        'genre': labels
+        'genre': genres
     })
 
     #Save to CSV
