@@ -2,16 +2,13 @@
 '''Load and preprocess MPST and Synthetic Datasets'''
 
 import json 
+import os
 import random
 import pandas as pd
 from typing import List, Dict, Tuple
 
-from .synthetic_data import(
-    GENRES as SYNTH_GENRES,
-    generate_synthetic_data
-)
-
 from src.utils.preprocessing import clean_text
+from collections import Counter
 
 # ---------------------------------------------------------------------------
 # Shared configs
@@ -170,6 +167,102 @@ def prepare_mpst_data_single_genre(
         'val':   (X_val,   y_val),
         'test':  (X_test,  y_test),
     }
+# ---------------------------------------------------------------------------
+# MPST Raw Tags
+# ---------------------------------------------------------------------------
+def prepare_mpst_data_raw(
+    mpst_dir: str,
+    csv_filename: str = 'mpst_full_data.csv',
+    partition_json_filename: str = 'partition.json',
+    min_tag_freq: int = 10,
+    shuffle: bool = True,
+    random_seed: int = 42,
+):
+    '''
+    Load MPST data with raw tags as genre labels
+
+    - Parse tags into individual genres
+    - Filter out rare tags
+    - Split by IMDB_ID using partition.json
+    - Flatten multi-tag movies into multiple (synopsis, tag) pairs
+    '''
+    rng = random.Random(random_seed)
+
+    #Paths
+    csv_path = os.path.join(mpst_dir, csv_filename)
+    partition_json_path = os.path.join(mpst_dir, partition_json_filename)
+
+    print("============================================")
+    print("Naive Bayes on MPST (raw tags)")
+    print("============================================")
+    print(f"MPST directory: {mpst_dir}")
+    print(f"CSV path:       {csv_path}")
+    print(f"Partition JSON: {partition_json_path}")
+    print("--------------------------------------------")
+
+    #1) Load MPST CSV
+    df = pd.read_csv(csv_path)
+
+    #2) Parse tags into individual genres
+    def _parse_tags(tag_str):
+        if not isinstance(tag_str, str):
+            return []
+        parts = [t.strip() for t in tag_str.split(',') if t.strip()]
+
+        return parts
+
+    df['tag_list'] = df['tags'].apply(_parse_tags)
+
+    #3) Calculate tag frequencies
+    tag_counter = Counter()
+    for tags in df['tag_list']:
+        tag_counter.update(tags)
+
+    #4) Filter to common tags (>5 movies)
+    common_tags = set([tag for tag, freq in tag_counter.items() if freq >= min_tag_freq])
+    df['tag_list'] = df['tag_list'].apply(
+        lambda tags: [t for t in tags if t in common_tags]
+    )
+
+    #5) Clean synopses
+    df['plot_synopsis'] = df['plot_synopsis'].fillna('').apply(clean_text)
+
+    #6) Load partition JSON for splits
+    with open(partition_json_path, 'r') as f:
+        partitions = json.load(f)
+
+    split_ids = {
+        split_name: set(partitions[split_name])
+        for split_name in ['train', 'val', 'test']
+    }
+
+    split_dict = {}
+
+    #7) For each split, pick rows, flatten multi-tag movies
+    for split_name in ["train", "val", "test"]:
+        ids = split_ids[split_name]
+        sub_df = df[df["imdb_id"].isin(ids)].copy()
+
+        # Raw (multi-label)
+        X_raw = sub_df["plot_synopsis"].tolist()
+        Y_raw = sub_df["tag_list"].tolist()   # list of lists/sets
+
+        # Flatten for Naive Bayes training
+        X_flat = []
+        y_flat = []
+        for synopsis, tag_list in zip(X_raw, Y_raw):
+            for tag in tag_list:
+                X_flat.append(synopsis)
+                y_flat.append(tag)
+
+        split_dict[split_name] = {
+            "X_raw": X_raw,
+            "Y_raw": Y_raw,   #multi-label truth
+            "X_flat": X_flat,
+            "y_flat": y_flat, #single-label training labels
+        }
+
+    return split_dict
 
 # ---------------------------------------------------------------------------
 # Synthetic Data Loader

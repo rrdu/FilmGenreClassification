@@ -2,6 +2,7 @@
 '''Naive Bayes Classifier for Film Genre Classification'''
 
 import math
+import pickle
 
 from collections import Counter, defaultdict
 from typing import List, Dict, Tuple
@@ -133,7 +134,7 @@ class NaiveBayesClassifier:
     # ---------------------------------------------------------------------------
     def predict(self, synopses):
         '''
-        Predict genre for one synopsis
+        Predict top 1 genre for one synopsis
         '''
         log_posteriors = self._log_posterior(synopses)
 
@@ -141,9 +142,35 @@ class NaiveBayesClassifier:
         predicted_genre = max(log_posteriors.items(), key=lambda x: x[1])[0]
 
         return predicted_genre
-    
     # ---------------------------------------------------------------------------
-    # Batch prediction + evaluation
+    def predict_top_k(self, synopses, k:int=3):
+        '''Predict top-k genres for one synopsis'''
+
+        log_posteriors = self._log_posterior(synopses)
+
+        #Sort by log posteriors
+        sorted_genres = sorted(
+            log_posteriors.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )
+        top_k_genres = [genre for genre, _ in sorted_genres[:k]]
+
+        return top_k_genres
+    # ---------------------------------------------------------------------------
+    def predict_top_k_proba(self, synopses, k:int=3):
+        '''Predict top-k genres and probabilities for one synopsis'''
+
+        probs = self.predict_proba(synopses)
+
+        sorted_items = sorted(
+            probs.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )
+
+        return sorted_items[:k]
+    
     # ---------------------------------------------------------------------------
     def batch_predict(self, synopses):
         '''
@@ -154,20 +181,39 @@ class NaiveBayesClassifier:
             predictions.append(self.predict(synopsis))
 
         return predictions 
+
     # ---------------------------------------------------------------------------
-    def eval_accuracy(self, synopses, true_genres):
+    def batch_predict_top_k(self, synopses, k:int=3):
         '''
-        Evaluate classification accuracy for list of synopses
+        Predict top k genres for a list of synopses
         '''
+        predictions = []
+        for synopsis in synopses:
+            predictions.append(self.predict_top_k(synopsis, k=k))
 
-        assert len(synopses) == len(true_genres), "Synopses and true genres should have the same length"
-
-        preds = self.batch_predict(synopses)
-        
-        correct = sum(p == t for p, t in zip(preds, true_genres))
-        accuracy = correct / len(true_genres)
-
-        return accuracy
+        return predictions 
+    # ---------------------------------------------------------------------------
+    #Save and load model
+    # ---------------------------------------------------------------------------
+    def save(self, filepath):
+        with open(filepath, 'wb') as f:
+            pickle.dump({
+                'alpha': self.alpha,
+                'class_priors_log': self.class_priors_log,
+                'word_log_probs': self.word_log_probs,
+                'vocab': self.vocab
+            }, f)
+    # ---------------------------------------------------------------------------
+    @staticmethod 
+    def load(filepath):
+        from .naive_bayes import NaiveBayesClassifier
+        with open(filepath, 'rb') as f:
+            data = pickle.load(f)
+        model = NaiveBayesClassifier(alpha=data['alpha'])
+        model.class_priors_log = data['class_priors_log']
+        model.word_log_probs = data['word_log_probs']
+        model.vocab = data['vocab']
+        return model
 # ---------------------------------------------------------------------------
 # Main function
 # ---------------------------------------------------------------------------
@@ -186,5 +232,7 @@ if __name__ == '__main__':
     test_synopsis = "soldier in a dangerous mission with an explosion"
     pred_genre = model.predict(test_synopsis)
     print("Predicted genre:", pred_genre)
+    print("Top-3 predicted genres:", model.predict_top_k(test_synopsis, k=3))
+
 
     print("Posterior distribution:", model.predict_proba(test_synopsis))
