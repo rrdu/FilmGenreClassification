@@ -7,7 +7,7 @@ import random
 import pandas as pd
 
 from typing import Dict, List, Tuple 
-from src.models.naive_bayes import NaiveBayesClassifier
+from models.naive_bayes import NaiveBayesClassifier
 
 #---------------------------------------------------------------------------
 #Turn log probs into normal probs
