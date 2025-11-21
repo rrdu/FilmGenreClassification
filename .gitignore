@@ -1,1 +1,48 @@
+### PyTorch Lightning / ML Artifacts
+# PyTorch Lightning default logging directory
+lightning_logs/
+
+# Checkpoint files from models (usually .ckpt or .pth)
+checkpoints/
+*.ckpt
+*.pth
+
+# Saved model output files
+model_output/
+wandb/ # If using Weights & Biases
+
+### Jupyter Notebook Files
+# Ignore metadata/data produced by Jupyter/IPython
+.ipynb_checkpoints/
+.jupyter/
+.ipython/
+
+# If you convert notebooks to scripts
+__pycache__/
+.pytest_cache/
+
+### Python Environment and Dependencies
+# Virtual environment directory
 .venv/
+venv/
+env/
+
+# Package dependencies
+dist/
+build/
+*.egg-info/
+
+# Compiled Python files
+*.pyc
+
+# Installation and testing
+.DS_Store # macOS system files
+.coverage # Coverage analysis
+/htmlcov/ # HTML coverage reports
+
+### Data Files (Crucial to Ignore)
+# Raw and processed data are often large and shouldn't be tracked
+data/
+input/
+output/
+dataset/
