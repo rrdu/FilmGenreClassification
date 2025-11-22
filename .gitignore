@@ -1,3 +1,5 @@
+.env
+
 ### PyTorch Lightning / ML Artifacts
 # PyTorch Lightning default logging directory
 lightning_logs/
