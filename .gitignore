@@ -11,7 +11,7 @@ checkpoints/
 
 # Saved model output files
 model_output/
-*/wandb/ # If using Weights & Biases
+**/wandb/ # If using Weights & Biases
 
 ### Jupyter Notebook Files
 # Ignore metadata/data produced by Jupyter/IPython
