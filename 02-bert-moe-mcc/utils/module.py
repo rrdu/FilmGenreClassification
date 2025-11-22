@@ -62,29 +62,70 @@ class MoE_LightningModule(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         texts, targets = batch
-        logits, _ = self(texts)
+        logits, router_logits = self(texts)
         loss = self.criterion(logits, targets.to(self.device))
-        # torchmetrics callable returns the computed value and updates state
         acc_val = self.val_acc(logits, targets.to(self.device))
+
+        # expert usage
+        probs = F.softmax(router_logits, dim=1)
+        mean_probs = probs.mean(dim=0)
+        self.log("val_loss", loss, prog_bar=True, on_step=False, on_epoch=True)
+        self.log("val_acc", acc_val, prog_bar=True, on_step=False, on_epoch=True)
+        for i,p in enumerate(mean_probs):
+            self.log(f"expert/mean_prob_{i}", p, on_epoch=True)
         
         # log the scalar returned
-        self.log("val_loss", loss, prog_bar=True)
-        self.log("val_acc", acc_val, prog_bar=True)
+        self.log("val_loss", loss, prog_bar=True, on_step=False, on_epoch=True)
+        self.log("val_acc", acc_val, prog_bar=True, on_step=False, on_epoch=True)
 
     # def configure_optimizers(self):
     #     return torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
+
     def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
+        """
+        AdamW optimizer + Hugging Face Transformers linear warmup/decay scheduler.
+        Requires `transformers` to be installed.
+        """
+        # 1️⃣ Parameter groups with weight decay
+        no_decay = ["bias", "LayerNorm.weight"]
+        wd_params, no_wd_params = [], []
+        for name, param in self.named_parameters():
+            if not param.requires_grad:
+                continue
+            if any(nd in name for nd in no_decay):
+                no_wd_params.append(param)
+            else:
+                wd_params.append(param)
 
-        num_training_steps = self.trainer.estimated_stepping_batches
-        num_warmup_steps = int(0.1 * num_training_steps)  # 10% warmup
+        optimizer = torch.optim.AdamW(
+            [
+                {"params": wd_params, "weight_decay": 0.01},
+                {"params": no_wd_params, "weight_decay": 0.0},
+            ],
+            lr=self.learning_rate,
+        )
 
+        # 2️⃣ Compute warmup/total steps using Lightning’s trainer
+        total_steps = getattr(self.trainer, "estimated_stepping_batches", 10000)
+        warmup_frac = float(self.hparams.get("warmup_frac", 0.1)) if hasattr(self, "hparams") else 0.1
+        num_warmup_steps = int(total_steps * warmup_frac)
+
+        # 3️⃣ Create scheduler
         scheduler = get_linear_schedule_with_warmup(
             optimizer,
             num_warmup_steps=num_warmup_steps,
-            num_training_steps=num_training_steps
+            num_training_steps=total_steps,
         )
-        return [optimizer], [{"scheduler": scheduler, "interval": "step"}]
+
+        # 4️⃣ Return optimizer + scheduler dict
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "interval": "step",
+                "frequency": 1,
+            },
+        }
 
 class IMDBDataset(Dataset):
     def __init__(self, data_dir_path, filename, class_names, text_col='description', label_col='csv_genre'):
