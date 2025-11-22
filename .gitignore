@@ -12,6 +12,8 @@ checkpoints/
 # Saved model output files
 model_output/
 **/wandb/ # If using Weights & Biases
+01-bert-moe-mlc/wandb/
+02-bert-moe-mcc/wandb/
 
 ### Jupyter Notebook Files
 # Ignore metadata/data produced by Jupyter/IPython
