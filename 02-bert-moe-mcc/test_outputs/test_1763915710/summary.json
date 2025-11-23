@@ -1,0 +1,29 @@
+{
+  "run_name": "test_1763915710",
+  "checkpoint": "checkpoints/multiclass/local-1763858773/local-1763858773-moe-epoch=10-val_acc=0.757.ckpt",
+  "metrics": {
+    "accuracy": 0.7602424025535583,
+    "f1_macro": 0.759545624256134,
+    "f1_weighted": 0.7602155208587646,
+    "precision_macro": 0.7589304447174072,
+    "recall_macro": 0.7603964805603027
+  },
+  "num_classes": 3,
+  "class_names": [
+    "action",
+    "horror",
+    "romance"
+  ],
+  "hparams": {
+    "num_classes": 3,
+    "num_experts": 8,
+    "learning_rate": 0.0002532794984515457,
+    "aux_loss_weight": 0.05332706700232566,
+    "class_weights": [
+      0.2996084286127595,
+      0.3901203866684629,
+      0.3102711847187775
+    ],
+    "warmup_frac": 0.06442182694907994
+  }
+}
