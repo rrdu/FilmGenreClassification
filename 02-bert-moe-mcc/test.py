@@ -1,12 +1,20 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """
-test.py — automatically finds the best local checkpoint (recursively across runs),
-reads saved hparams from checkpoint, infers encoder dimensions if needed,
+test.py — automatically finds the best local checkpoint (recursively across runs)
+
+Reads saved hparams from checkpoint, infers encoder dimensions if needed,
 reconstructs model correctly, loads weights, and evaluates metrics (including per-class CSV export).
 """
+import argparse
+import re
+from pathlib import Path
+import numpy as np
+import pandas as pd
 
 import torch
 from torch.utils.data import DataLoader
+torch.set_float32_matmul_precision('medium')
+
 from torchmetrics import MetricCollection
 from torchmetrics.classification import (
     MulticlassF1Score,
@@ -14,16 +22,16 @@ from torchmetrics.classification import (
     MulticlassRecall,
     MulticlassAccuracy,
 )
-import re
-from pathlib import Path
-import numpy as np
-import pandas as pd
-from sklearn.metrics import classification_report, precision_recall_fscore_support, confusion_matrix
-torch.set_float32_matmul_precision('medium')
+from sklearn.metrics import (
+    classification_report, 
+    precision_recall_fscore_support, 
+    confusion_matrix,
+    ConfusionMatrixDisplay,
+)
 
-# =====================================================
-# Helper — recursively find the best checkpoint by val_acc
-# =====================================================
+from utils.module import MoE_LightningModule, IMDBDataset
+from layers.encoder import SBERT_MoE_Model
+
 def pick_best_local_checkpoint(checkpoints_root="checkpoints/multiclass"):
     ckpt_paths = list(Path(checkpoints_root).rglob("*.ckpt"))
     if not ckpt_paths:
@@ -36,30 +44,29 @@ def pick_best_local_checkpoint(checkpoints_root="checkpoints/multiclass"):
             best_val, best_path = val, p
     return best_path
 
-# =====================================================
-# Imports — adjust paths if needed
-# =====================================================
-try:
-    from utils.module import MoE_LightningModule, IMDBDataset
-    from layers.encoder import SBERT_MoE_Model
-    TRAIN_DATA_DIR = Path("../data/imdb_arh_trimmed")
-except Exception:
-    from module import MoE_LightningModule, IMDBDataset
-    from encoder import SBERT_MoE_Model
-    TRAIN_DATA_DIR = Path("../data/imdb_arh_trimmed")
 
-# =====================================================
-# Main
-# =====================================================
+def parse_args():    
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--name", type=str, default="test_run", help="Name for this test run")
+    parser.add_argument("--data_dir", type=str, default="../data/imdb_arh_trimmed", help="Path to data directory")
+    parser.add_argument("--train_file", type=str, default="imdb_arh_train.csv", help="Train CSV filename")
+    parser.add_argument("--test_file", type=str, default="imdb_arh_test.csv", help="Test CSV filename")
+    parser.add_argument("--batch_size", type=int, default=64)
+    parser.add_argument("--checkpoint_path", type=str, default=None, help="Path to the best checkpoint")
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    # 1) find best checkpoint
-    CHECKPOINT_PATH = pick_best_local_checkpoint("checkpoints/multiclass")
-    print(f"✅ Using best local checkpoint: {CHECKPOINT_PATH}")
+    # --------- Configuration ----------
 
-    # 2) dataset
+    args = parse_args()
+
+    TRAIN_DATA_DIR = Path("../data/imdb_arh_trimmed")
     DATA_DIR = TRAIN_DATA_DIR
     TEST_FILE = "imdb_arh_test.csv"
     BATCH_SIZE = 64
+    CHECKPOINT_PATH = pick_best_local_checkpoint("checkpoints/multiclass")
+    print(f"✅ Using best local checkpoint: {CHECKPOINT_PATH}")
 
     CLASS_NAMES = IMDBDataset.discover_classes(DATA_DIR, "imdb_arh_train.csv")
     print(f"Loaded {len(CLASS_NAMES)} classes: {CLASS_NAMES}")
@@ -113,7 +120,7 @@ if __name__ == "__main__":
     print("Inferred encoder kwargs:", encoder_kwargs_ckpt)
 
     num_experts_ckpt = int(hparams.get("num_experts", 8))
-    expert_hidden_dim_ckpt = int(hparams.get("expert_hidden_dim", 128))
+    expert_hidden_dim_ckpt = int(hparams.get("expert_hidden_dim", 64))
     top_k_ckpt = int(hparams.get("top_k", 1))
 
     # =====================================================

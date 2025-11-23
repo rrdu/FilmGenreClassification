@@ -1,19 +1,13 @@
 # sweep.yaml
-# Uses Bayesian optimization by default (change to "random" or "grid" if desired)
 method: random # bayes
 run_cap: 5
 metric:
   name: val_f1_macro # val_acc
   goal: maximize
-
-# The program to run (your uploaded training script)
 program: ./train.py
-
-# How many runs to perform in total (agent stops when this is reached)
 early_terminate:
   type: hyperband
   min_iter: 3
-
 parameters:
   seed:
     distribution: q_uniform
