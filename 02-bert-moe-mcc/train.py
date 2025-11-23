@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
-"""
-train.py — training entrypoint with WandB sweep support and warmup scheduler support.
+# -*- coding: utf-8 -*-
 
-Each run will save checkpoints to a unique subfolder under checkpoints/multiclass/<run_id>/,
-and keep only the best checkpoint for that run (save_top_k=1).
+"""
+train.py — Training entrypoint with WandB sweep support.
+
+Key Features:
+- Supports warmup scheduler.
+- Saves checkpoints to checkpoints/multiclass/<run_id>/.
+- Retains only the best checkpoint (save_top_k=1).
+
+Usage:
+    python train.py --data_dir ../data/imdb_arh_trimmed --train_file imdb_arh_train.csv --val_file imdb_arh_val.csv
 """
 import os
 import argparse
@@ -16,7 +23,11 @@ from pathlib import Path
 import wandb
 import torch
 from torch.utils.data import DataLoader
-torch.set_float32_matmul_precision('medium')
+
+try:
+    torch.set_float32_matmul_precision('medium')
+except Exception:
+    pass
 
 import lightning.pytorch as pl
 from lightning.pytorch.loggers import WandbLogger
@@ -59,7 +70,7 @@ def parse_args():
 
 def main():
     # --------- Configuration ----------
-    
+
     args = parse_args()
 
     # If running under a sweep, wandb.agent will call this script and set wandb.config.
