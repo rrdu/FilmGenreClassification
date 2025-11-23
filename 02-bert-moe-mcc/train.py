@@ -2,41 +2,29 @@
 """
 train.py — training entrypoint with WandB sweep support and warmup scheduler support.
 
-Usage:
-  # manual run (no wandb)
-  python /mnt/data/train.py
-
-  # manual run but log to wandb (useful when debugging)
-  export WANDB_API_KEY=<key>
-  python /mnt/data/train.py --wandb_run
-
-  # When using wandb sweeps, start agents as described in docs; wandb.agent will run this script.
+Each run will save checkpoints to a unique subfolder under checkpoints/multiclass/<run_id>/,
+and keep only the best checkpoint for that run (save_top_k=1).
 """
 import os
 import argparse
 import math
 import random
+import time
 import numpy as np
 import pandas as pd
 from pathlib import Path
 
 import torch
 from torch.utils.data import DataLoader
+torch.set_float32_matmul_precision('medium')
 
 import lightning.pytorch as pl
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 
-# Try multiple import locations (adapt if your project structure differs)
-try:
-    from utils.module import MoE_LightningModule, IMDBDataset
-    from layers.encoder import SBERT_MoE_Model
-except Exception:
-    try:
-        from module import MoE_LightningModule, IMDBDataset
-        from encoder import SBERT_MoE_Model
-    except Exception:
-        from multiclass_tr import MoE_LightningModule, IMDBDataset, SBERT_MoE_Model
+from utils.module import MoE_LightningModule, IMDBDataset
+from layers.encoder import SBERT_MoE_Model
+
 
 import wandb
 
@@ -60,7 +48,7 @@ def parse_args():
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--accumulate_grad_batches", type=int, default=1)
     parser.add_argument("--precision", type=int, default=16, help="Trainer precision: 16 or 32")
-    # allow overriding some defaults from CLI when debugging locally
+    # override defaults if desired
     parser.add_argument("--learning_rate", type=float, default=None)
     parser.add_argument("--batch_size", type=int, default=None)
     parser.add_argument("--num_experts", type=int, default=None)
@@ -82,7 +70,6 @@ def main():
         run = wandb.init(project=args.project, reinit=True)
         config = run.config
     else:
-        # Default config for manual runs; these are used if no wandb config is present
         default_cfg = dict(
             seed=42,
             learning_rate=3e-4,
@@ -95,7 +82,7 @@ def main():
             warmup_frac=0.1,
             max_epochs=args.max_epochs,
         )
-        # Override defaults by CLI args if provided
+        # override from CLI if set
         for k in ["learning_rate", "batch_size", "num_experts", "top_k", "aux_loss_weight",
                   "expert_hidden_dim", "encoder_emb_dim", "warmup_frac", "seed", "max_epochs"]:
             val = getattr(args, k, None)
@@ -121,20 +108,19 @@ def main():
     data_dir = Path(args.data_dir)
     train_path = data_dir / args.train_file
     val_path = data_dir / args.val_file
+    if not train_path.exists() or not val_path.exists():
+        raise FileNotFoundError("Train/Val files not found under data_dir")
 
-    if not train_path.exists():
-        raise FileNotFoundError(f"Train file not found: {train_path.resolve()}")
-    if not val_path.exists():
-        raise FileNotFoundError(f"Val file not found: {val_path.resolve()}")
-
-    # Discover classes using the dataset helper
     CLASS_NAMES = IMDBDataset.discover_classes(data_dir, args.train_file)
     num_classes = len(CLASS_NAMES)
     print(f"Discovered {num_classes} classes: {CLASS_NAMES}")
 
-    # Build vocab texts from the whole training CSV for tokenizer
+    # Build vocab texts for tokenizer
     train_df = pd.read_csv(train_path)
     vocab_texts = train_df["description"].fillna("").astype(str).tolist()
+    class_counts = train_df['csv_genre'].value_counts().sort_index()
+    weights = 1.0 / (class_counts / class_counts.sum())  # inverse frequency
+    weights = (weights / weights.sum()).tolist()
 
     # --------- model construction ----------
     encoder_kwargs = dict(
@@ -160,9 +146,10 @@ def main():
         num_experts=num_experts,
         learning_rate=learning_rate,
         aux_loss_weight=aux_loss_weight,
+        class_weights=weights,
     )
 
-    # Ensure warmup_frac is available for configure_optimizers
+    # Make warmup_frac available to configure_optimizers
     try:
         pl_module.hparams["warmup_frac"] = warmup_frac
     except Exception:
@@ -170,19 +157,15 @@ def main():
 
     # If running under wandb, merge wandb.config into module hparams so they get saved to ckpt
     if run is not None:
-        # wandb.config is a dict-like of the current run's hyperparams
         try:
             for k, v in dict(run.config).items():
-                # store in hparams for Lightning checkpoint
                 pl_module.hparams[k] = v
         except Exception:
-            # safe fallback: set attribute
             setattr(pl_module, "wandb_config", dict(run.config))
 
     # --------- datasets & dataloaders ----------
     tr_ds = IMDBDataset(data_dir_path=data_dir, filename=args.train_file, class_names=CLASS_NAMES)
     va_ds = IMDBDataset(data_dir_path=data_dir, filename=args.val_file, class_names=CLASS_NAMES)
-
     tr_loader = DataLoader(tr_ds, batch_size=batch_size, num_workers=args.num_workers, shuffle=True)
     va_loader = DataLoader(va_ds, batch_size=batch_size, num_workers=args.num_workers, shuffle=False)
 
@@ -195,21 +178,27 @@ def main():
         mode="max"
     )
 
+    # Unique run id & per-run folder to avoid collisions
+    run_id = None
+    if run is not None:
+        # W&B run id is unique; sanitize for filesystem
+        run_id = str(run.id).replace("/", "-")
+    else:
+        run_id = f"local-{int(time.time())}"
+
+    ckpt_dir = Path("checkpoints") / "multiclass" / run_id
+
     checkpoint_cb = ModelCheckpoint(
-        dirpath="checkpoints/multiclass/",
-        filename="moe-{epoch:02d}-{val_acc:.3f}",
+        dirpath=str(ckpt_dir),
+        filename=f"{run_id}-moe-{{epoch:02d}}-{{val_acc:.3f}}",
         monitor="val_acc",
         mode="max",
-        save_top_k=3,
-        save_last=True
+        save_top_k=1,    # keep only the best checkpoint for this run
+        save_last=False,
     )
 
-    # WandB logger
-    if run is not None or args.wandb_run:
-        # log_model=True saves model file to W&B run so it can be downloaded later if needed
-        wandb_logger = WandbLogger(project=config.get("project", args.project), name=None, log_model=True)
-    else:
-        wandb_logger = None  # no logger
+    # WandB logger (log_model=True allows retrieving model artifact from W&B if needed)
+    wandb_logger = WandbLogger(project=config.get("project", args.project), name=None, log_model=True) if (run is not None or args.wandb_run) else None
 
     # --------- trainer ----------
     trainer = pl.Trainer(
@@ -235,6 +224,7 @@ def main():
         "encoder_emb_dim": encoder_emb_dim,
         "warmup_frac": warmup_frac,
         "max_epochs": max_epochs,
+        "ckpt_dir": str(ckpt_dir),
     })
 
     trainer.fit(pl_module, train_dataloaders=tr_loader, val_dataloaders=va_loader)

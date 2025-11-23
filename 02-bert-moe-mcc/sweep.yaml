@@ -1,8 +1,9 @@
 # sweep.yaml
 # Uses Bayesian optimization by default (change to "random" or "grid" if desired)
-method: bayes
+method: random # bayes
+run_cap: 5
 metric:
-  name: val_acc
+  name: val_f1_macro # val_acc
   goal: maximize
 
 # The program to run (your uploaded training script)
@@ -11,30 +12,29 @@ program: ./train.py
 # How many runs to perform in total (agent stops when this is reached)
 early_terminate:
   type: hyperband
-  min_iter: 5
+  min_iter: 3
 
 parameters:
   seed:
     distribution: q_uniform
     min: 1
-    max: 5
+    max: 3
     q: 1
   learning_rate:
     distribution: log_uniform_values
     min: 1e-5
     max: 5e-3
   batch_size:
-    distribution: categorical
-    values: [32, 64, 128]
+    value: 64
   num_experts:
     distribution: categorical
-    values: [4, 8, 16]
+    values: [4, 6, 8]
   top_k:
     distribution: categorical
     values: [1, 2]
   aux_loss_weight:
     distribution: log_uniform_values
-    min: 1e-4
+    min: 1e-2
     max: 1.0
   expert_hidden_dim:
     distribution: categorical
@@ -47,4 +47,4 @@ parameters:
     min: 0.01
     max: 0.2
   max_epochs:
-    value: 10
+    value: 20

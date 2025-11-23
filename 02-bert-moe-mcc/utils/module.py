@@ -10,21 +10,29 @@ from pathlib import Path
 from torch.utils.data import Dataset
 
 class MoE_LightningModule(pl.LightningModule):
-    def __init__(self, model, num_classes, num_experts, learning_rate=1e-3, aux_loss_weight=0.1):
+    def __init__(self, model, num_classes, num_experts,
+                 learning_rate=1e-3, aux_loss_weight=0.1,
+                 class_weights=None):
         super().__init__()
         self.save_hyperparameters(ignore=['model'])
-        
-        # Keep references to encoder (CustomSBERTLikeEncoder) and head (MoEClassifier)
-        # 'model' is expected to be SBERT_MoE_Model instance
+
         self.backbone = model.sbert
         self.head = model.moe_head
         self.learning_rate = learning_rate
-        
         self.num_experts = num_experts
         self.aux_loss_weight = aux_loss_weight
-        
-        self.criterion = nn.CrossEntropyLoss()
+
+        # Initialize class weights if provided
+        if class_weights is not None:
+            # convert list or tensor to a tensor on correct device later
+            self.register_buffer("class_weights", torch.tensor(class_weights, dtype=torch.float))
+            self.criterion = nn.CrossEntropyLoss(weight=self.class_weights)
+        else:
+            self.class_weights = None
+            self.criterion = nn.CrossEntropyLoss()
+
         self.val_acc = MulticlassAccuracy(num_classes=num_classes, average='micro')
+
 
     def forward(self, texts: List[str]):
         # Use tokenizer -> encoder -> head
