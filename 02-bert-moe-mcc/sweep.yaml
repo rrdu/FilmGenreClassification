@@ -1,13 +1,13 @@
-# sweep.yaml
-method: random # bayes
+method: random
 run_cap: 5
 metric:
-  name: val_f1_macro # val_acc
+  name: val_acc
   goal: maximize
 program: ./train.py
 early_terminate:
   type: hyperband
   min_iter: 3
+
 parameters:
   seed:
     distribution: q_uniform
@@ -42,3 +42,12 @@ parameters:
     max: 0.2
   max_epochs:
     value: 20
+
+command:
+  - ${env}
+  - python
+  - ${program}
+  - --wandb_run
+  - --data_dir=../data/imdb_arh_trimmed
+  - --train_file=imdb_arh_train.csv
+  - --val_file=imdb_arh_val.csv

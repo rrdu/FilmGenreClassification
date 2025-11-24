@@ -35,6 +35,9 @@ from torchmetrics.classification import (
     MulticlassPrecision,
     MulticlassRecall,
     MulticlassAccuracy,
+    MulticlassMatthewsCorrCoef,  # <--- NEW
+    MulticlassCohenKappa,        # <--- NEW
+    MulticlassCalibrationError   # <--- NEW (Optional, checks confidence)
 )
 from sklearn.metrics import (
     classification_report,
@@ -178,11 +181,26 @@ if __name__ == "__main__":
     loaded_model.eval()
 
     metrics = MetricCollection({
+        # Standard Micro Accuracy
         "accuracy": MulticlassAccuracy(num_classes=num_classes, average="micro"),
+        
+        # Top-3 Accuracy (Did the model get it right in the top 3 guesses?)
+        "accuracy_top3": MulticlassAccuracy(num_classes=num_classes, top_k=3),
+        
+        # Balanced Accuracy (Average of Recall per class - good for imbalance)
+        "accuracy_balanced": MulticlassAccuracy(num_classes=num_classes, average="macro"),
+
+        # Macro Metrics (Treats all classes equally)
         "f1_macro": MulticlassF1Score(num_classes=num_classes, average="macro"),
         "precision_macro": MulticlassPrecision(num_classes=num_classes, average="macro"),
         "recall_macro": MulticlassRecall(num_classes=num_classes, average="macro"),
+        
+        # Weighted Metrics (Weighted by class size)
         "f1_weighted": MulticlassF1Score(num_classes=num_classes, average="weighted"),
+        
+        # Advanced Statistical Metrics
+        "mcc": MulticlassMatthewsCorrCoef(num_classes=num_classes),
+        "cohen_kappa": MulticlassCohenKappa(num_classes=num_classes)
     }).to(device)
 
     all_preds = []
@@ -280,18 +298,32 @@ if __name__ == "__main__":
     pd.DataFrame(cm_norm, index=CLASS_NAMES, columns=CLASS_NAMES).to_csv(cm_norm_path)
     print(f"Saved normalized confusion matrix to {cm_norm_path.resolve()}")
 
-    # Save summary JSON (metrics + hparams)
+# Convert tensor metrics to python floats
+    metrics_dict = {k: float(v.item()) for k, v in final_results.items()}
+
+    # Save summary JSON (Enhanced structure)
     summary = {
         "run_name": args.name,
         "checkpoint": str(CHECKPOINT_PATH),
-        "metrics": {k: float(v.item()) for k, v in final_results.items()},
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        # Create a dedicated 'overall_performance' key for quick parsing
+        "overall_performance": {
+            "accuracy": metrics_dict.get("accuracy"),
+            "balanced_accuracy": metrics_dict.get("accuracy_balanced"),
+            "f1_macro": metrics_dict.get("f1_macro"),
+            "f1_weighted": metrics_dict.get("f1_weighted"),
+            "mcc": metrics_dict.get("mcc"),
+            "top_3_acc": metrics_dict.get("accuracy_top3")
+        },
+        "all_metrics": metrics_dict,
         "num_classes": num_classes,
         "class_names": CLASS_NAMES,
         "hparams": hparams if hparams else {},
     }
+    
     summary_path = run_dir / "summary.json"
     with open(summary_path, "w") as fh:
         json.dump(summary, fh, indent=2)
-    print(f"Saved summary to {summary_path.resolve()}")
+    print(f"Saved extended summary to {summary_path.resolve()}")
 
     print("\nDone.")
