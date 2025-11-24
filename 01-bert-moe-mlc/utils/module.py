@@ -1,53 +1,78 @@
 import pandas as pd
-import pathlib as Path
+import pathlib
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import lightning.pytorch as pl
 from torch.utils.data import Dataset
 from torchmetrics.classification import MultilabelF1Score
+import numpy as np
 
+import pandas as pd
+import pathlib
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import lightning.pytorch as pl
+from torch.utils.data import Dataset
+from torchmetrics.classification import MultilabelF1Score
+import numpy as np
 
 class MoE_LightningModule(pl.LightningModule):
-    def __init__(self, model, num_classes, num_experts, learning_rate=1e-3, aux_loss_weight=0.1, pos_weight=None, threshold=0.5):
+    def __init__(
+        self,
+        model,
+        num_classes: int,
+        num_experts: int = 4,
+        learning_rate: float = 1e-3,
+        aux_loss_weight: float = 0.1,
+        pos_weight=None,
+        threshold: float = 0.5,
+        weight_decay: float = 0.01,
+        finetune_backbone: bool = False,
+        multilabel: bool = True
+    ):
         super().__init__()
-        self.save_hyperparameters(ignore=['model', 'pos_weight']) # Don't save huge tensors to hparams
+        self.save_hyperparameters(ignore=['model'])
         
-        self.backbone = model.sbert
-        self.head = model.moe_head
-        self.learning_rate = learning_rate
-        self.num_experts = num_experts
-        self.aux_loss_weight = aux_loss_weight
-        
-        if pos_weight is not None:
-            # Ensure it's a tensor
-            if not isinstance(pos_weight, torch.Tensor):
-                pos_weight = torch.tensor(pos_weight)
-            
-            # Register as buffer so it moves to device automatically with the model
-            self.register_buffer('pos_weight', pos_weight)
-            self.criterion = nn.BCEWithLogitsLoss(pos_weight=self.pos_weight)
-        else:
-            self.criterion = nn.BCEWithLogitsLoss()
-        self.val_f1 = MultilabelF1Score(num_labels=num_classes, threshold=threshold, average='micro')
+        # FIX: Do not assign self.model = model. 
+        # This prevents parameters from being nested under "model." prefix.
+        # We extract parts directly to match standard checkpoint keys (backbone.*, head.*).
+        self.backbone = getattr(model, "sbert", None)
+        self.head = getattr(model, "moe_head", None)
 
-    def forward(self, x):
-        # 1. Tokenize the raw text
-        # This converts ["Hello world"] into {'input_ids': ..., 'attention_mask': ...}
-        features = self.backbone.tokenize(x)
+        if self.backbone is None or self.head is None:
+            raise ValueError("Provided `model` must have `.sbert` and `.moe_head` attributes")
+
+        self.num_classes = num_classes
+        self.learning_rate = learning_rate
+        self.aux_loss_weight = aux_loss_weight
+        self.threshold = threshold
+        self.weight_decay = weight_decay
+        self.finetune_backbone = finetune_backbone
+        self.num_experts = num_experts # Saved for logging if needed
+
+        # --- Loss Function ---
+        if pos_weight is not None:
+             self.register_buffer("pos_weight", torch.tensor(pos_weight))
+             self.criterion = nn.BCEWithLogitsLoss(pos_weight=self.pos_weight)
+        else:
+             self.criterion = nn.BCEWithLogitsLoss()
+
+        # --- Metrics ---
+        self.val_f1 = MultilabelF1Score(num_labels=self.num_classes, average='micro', threshold=self.threshold)
+        self.train_f1 = MultilabelF1Score(num_labels=self.num_classes, average='micro', threshold=self.threshold)
+
+    def forward(self, texts):
+        # Manually run forward pass since self.model is not registered
+        # 1. Encode via Backbone
+        features = self.backbone.encode(texts, convert_to_tensor=True)
+        # Ensure features are on the correct device
+        features = features.to(self.device)
         
-        # 2. Move inputs to the correct device (GPU/MPS)
-        # LightningModule provides self.device
-        features = {key: value.to(self.device) for key, value in features.items()}
-        
-        # 3. Pass through SBERT backbone
-        # calling .forward() or __call__() allows gradients to flow (unlike .encode())
-        out = self.backbone(features)
-        
-        # 4. Extract the sentence embedding
-        embeddings = out['sentence_embedding']
-        
-        # 5. Pass through MoE Head
-        return self.head(embeddings)
+        # 2. Pass through MoE Head
+        logits, router_logits = self.head(features)
+        return logits, router_logits
 
     def _compute_load_balancing_loss(self, router_logits):
         probs = F.softmax(router_logits, dim=1)
@@ -57,136 +82,120 @@ class MoE_LightningModule(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         texts, targets = batch
-        logits, router_logits = self(texts)
+        targets = targets.to(self.device).float()
+        
+        logits, router_logits = self.forward(texts)
         
         cls_loss = self.criterion(logits, targets)
         aux_loss = self._compute_load_balancing_loss(router_logits)
+        loss = cls_loss + self.aux_loss_weight * aux_loss
+
+        probs = torch.sigmoid(logits)
+        self.train_f1.update(probs, targets.int())
         
-        total_loss = cls_loss + (self.aux_loss_weight * aux_loss)
-        
-        self.log("train_loss", total_loss)
-        return total_loss
+        self.log("train_loss", loss, prog_bar=True)
+        return loss
+
+    def on_train_epoch_end(self):
+        self.log("train_f1", self.train_f1.compute(), prog_bar=True)
+        self.train_f1.reset()
 
     def validation_step(self, batch, batch_idx):
         texts, targets = batch
+        targets = targets.to(self.device).float()
         
-        # Forward pass (we don't need router logits for validation metrics)
-        logits, _ = self(texts)
-        
-        # Calculate Loss
+        logits, router_logits = self.forward(texts)
         val_loss = self.criterion(logits, targets)
         
-        # Update F1 Score
-        self.val_f1(logits, targets)
-        
-        # Log metrics so the Scheduler can find 'val_loss'
+        probs = torch.sigmoid(logits)
+        self.val_f1.update(probs, targets.int())
+
         self.log("val_loss", val_loss, prog_bar=True)
-        self.log("val_f1", self.val_f1, prog_bar=True)
+        return {"val_loss": val_loss}
+
+    def on_validation_epoch_end(self):
+        f1 = self.val_f1.compute()
+        self.log("val_f1", f1, prog_bar=True)
+        self.val_f1.reset()
 
     def configure_optimizers(self):
-        # 1. Initialize Optimizer with ONLY the Head (Backbone added later by Callback)
         optimizer = torch.optim.AdamW(
             self.head.parameters(), 
-            lr=1e-3, 
-            weight_decay=0.01
+            lr=self.learning_rate, 
+            weight_decay=self.weight_decay
         )
-        
-        # 2. Use ReduceLROnPlateau (Safe for dynamic unfreezing)
-        # It waits for 'val_loss' to stop improving, then lowers LR
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
             mode='min',
             factor=0.1,
             patience=2
         )
-        
         return {
             "optimizer": optimizer,
             "lr_scheduler": {
                 "scheduler": scheduler,
-                "monitor": "val_loss", # Required for ReduceLROnPlateau
+                "monitor": "val_loss",
                 "interval": "epoch",
                 "frequency": 1
             }
         }
-        
 
+# ---------------------------
+# Dataset utility (Unchanged from your upload, included for completeness)
+# ---------------------------
 class IMDBDataset(Dataset):
-    def __init__(self, data_dir_path, filename, class_names, text_col='description', label_col='genre_list'):
-        """
-        Args:
-            data_dir_path (Path or str): Relative path to data directory.
-            filename (str): The CSV filename (e.g., 'train.csv').
-            class_names (list): List of valid classes (ORDER MATTERS).
-            text_col (str): Column name for text.
-            label_col (str): Column name for labels.
-        """
-        # 1. Setup Path safely
-        self.data_path = Path(data_dir_path) / filename
-        
-        if not self.data_path.exists():
-            raise FileNotFoundError(f"File not found at: {self.data_path.resolve()}")
-            
-        print(f"Loading data from {self.data_path.name}...")
-        self.df = pd.read_csv(self.data_path)
-        
-        # 2. Process Text (Handle NaNs, ensure strings)
-        self.texts = self.df[text_col].fillna("").astype(str).tolist()
-        
-        # 3. Process Labels (Multi-hot Encoding)
-        # Create map: "Action" -> 0, "Drama" -> 1, etc.
-        self.class_to_idx = {cls: i for i, cls in enumerate(class_names)}
-        self.num_classes = len(class_names)
-        self.labels = []
-        
-        # Track unseen genres for safety warning
-        unseen_genres = set()
-        
-        for genre_str in self.df[label_col]:
-            # Initialize zero vector [0.0, 0.0, ...]
-            label_vec = torch.zeros(self.num_classes, dtype=torch.float)
-            
-            if pd.notna(genre_str):
-                # Split "Action, Drama" -> ["Action", "Drama"]
-                # .strip() removes whitespace around words
-                current_genres = [g.strip() for g in str(genre_str).split(',')]
-                
-                for genre in current_genres:
-                    if genre in self.class_to_idx:
-                        idx = self.class_to_idx[genre]
-                        label_vec[idx] = 1.0
-                    else:
-                        # Track genres that don't match our class list
-                        unseen_genres.add(genre)
-            
-            self.labels.append(label_vec)
+    def __init__(self, data_dir_path, filename, class_names=None, text_col='description', label_col='genre_list', multilabel=True):
+        super().__init__()
+        data_dir = pathlib.Path(data_dir_path)
+        path = data_dir / filename
+        if not path.exists():
+            raise FileNotFoundError(f"File not found: {path.resolve()}")
+        self.df = pd.read_csv(path)
+        self.text_col = text_col
+        self.label_col = label_col
+        self.multilabel = multilabel
 
-        # 4. Warning System
-        # If this is the test set, and it has weird genres not in train, warn the user.
-        if unseen_genres:
-            print(f"⚠️  WARNING in {filename}: Found {len(unseen_genres)} genres not in the provided class list.")
-            print(f"   Examples of ignored genres: {list(unseen_genres)[:5]}")
-            print(f"   (These were ignored during label creation)")
+        if class_names is None:
+            self.class_names = self.discover_classes(data_dir, filename, label_col=self.label_col)
+        else:
+            self.class_names = class_names
+
+        self.texts = self.df[self.text_col].fillna("").astype(str).tolist()
+        self.labels = []
+        for i, row in self.df.iterrows():
+            lbl = row.get(self.label_col, "")
+            if pd.isna(lbl):
+                lbl = ""
+            if self.multilabel:
+                parts = [p.strip() for p in str(lbl).split(",") if p.strip()]
+                vec = np.zeros(len(self.class_names), dtype=np.float32)
+                for p in parts:
+                    if p in self.class_names:
+                        vec[self.class_names.index(p)] = 1.0
+                self.labels.append(vec)
+            else:
+                idx = -1
+                s = str(lbl).strip()
+                if s in self.class_names:
+                    idx = self.class_names.index(s)
+                self.labels.append(np.int64(idx))
 
     def __len__(self):
         return len(self.texts)
 
     def __getitem__(self, idx):
-        return self.texts[idx], self.labels[idx]
+        text = self.texts[idx]
+        label = self.labels[idx]
+        if self.multilabel:
+            return text, torch.from_numpy(label).float()
+        else:
+            return text, torch.tensor(label, dtype=torch.long)
 
     @staticmethod
     def discover_classes(data_dir_path, filename, label_col='genre_list'):
-        """
-        Static utility to scan a CSV and return sorted unique class names.
-        Use this ONCE on your TRAINING set only.
-        """
-        path = Path(data_dir_path) / filename
+        path = pathlib.Path(data_dir_path) / filename
         if not path.exists():
-             raise FileNotFoundError(f"File not found at: {path.resolve()}")
-
+            raise FileNotFoundError(f"File not found at: {path.resolve()}")
         df = pd.read_csv(path)
-        
-        # Split by comma, explode list to rows, strip whitespace, find unique
         genres = df[label_col].dropna().astype(str).str.split(',').explode().str.strip().unique()
-        
         return sorted(list(genres))

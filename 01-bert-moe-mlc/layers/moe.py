@@ -3,23 +3,23 @@ import torch.nn as nn
 import torch.nn.functional as F
 from sentence_transformers import SentenceTransformer
 
-
 class Expert(nn.Module):
     """
-    A simple Feed-Forward Network acting as a single 'Expert'.
+    Simple feed-forward expert. Matches Notebook definition.
     """
     def __init__(self, input_dim, hidden_dim, output_dim, dropout=0.1):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
-            nn.SiLU(),
+            nn.GELU(),  # Notebook uses GELU, script used SiLU
             nn.Dropout(dropout),
             nn.Linear(hidden_dim, output_dim)
         )
 
     def forward(self, x):
         return self.net(x)
+
 
 class TopKRouter(nn.Module):
     """
@@ -32,15 +32,17 @@ class TopKRouter(nn.Module):
 
     def forward(self, x):
         logits = self.gate(x)
+        # Select Top K
         top_k_vals, top_k_indices = torch.topk(logits, self.top_k, dim=1)
         router_probs = F.softmax(top_k_vals, dim=1)
         return router_probs, top_k_indices, logits
 
+
 class MoEClassifier(nn.Module):
     """
-    The Mixture of Experts Classification Head.
+    Sparse MoE Head.
     """
-    def __init__(self, input_dim, num_classes, num_experts=4, top_k=2, expert_hidden_dim=128):
+    def __init__(self, input_dim, num_classes, num_experts=8, expert_hidden_dim=128, top_k=2):
         super().__init__()
         self.num_experts = num_experts
         self.top_k = top_k
@@ -52,50 +54,71 @@ class MoEClassifier(nn.Module):
         ])
 
     def forward(self, x):
+        """
+        Args:
+            x: (Batch, Embedding_Dim)
+        """
         batch_size = x.size(0)
         router_probs, expert_indices, router_logits = self.router(x)
         
-        final_output = torch.zeros(batch_size, self.experts[0].net[-1].out_features).to(x.device)
+        # Output container
+        # We look at the first expert to determine output size (num_classes)
+        final_output = torch.zeros(batch_size, self.experts[0].net[-1].out_features, device=x.device)
         
+        # Iterate through each k-th selected expert
         for k in range(self.top_k):
+            # Indices of experts selected for the k-th position
             selected_experts = expert_indices[:, k]
+            # Weights for the k-th position
             gate_weight = router_probs[:, k].unsqueeze(1)
             
+            # For every expert, find which batch items selected it
             for expert_idx in range(self.num_experts):
                 mask = (selected_experts == expert_idx)
                 if mask.any():
+                    # Process only the specific batch items for this expert
                     expert_input = x[mask]
                     expert_output = self.experts[expert_idx](expert_input)
                     final_output[mask] += gate_weight[mask] * expert_output
                     
         return final_output, router_logits
 
+
 class SBERT_MoE_Model(nn.Module):
     """
-    Full End-to-End Model: SBERT Encoder + MoE Classifier
+    Wrapper model.
     """
-    def __init__(self, model_name='all-MiniLM-L6-v2', num_classes=5, num_experts=8, top_k=2):
+    def __init__(self, model_name_or_path='all-MiniLM-L6-v2', num_classes=10, num_experts=8, expert_hidden_dim=128, top_k=2, device=None):
         super().__init__()
-        # Initialize SBERT
-        self.sbert = SentenceTransformer(model_name)
+        self.sbert = SentenceTransformer(model_name_or_path)
         
-        # Capture device choice
-        target_device = self.sbert.device 
-        
-        # Initialize MoE head
-        embedding_dim = self.sbert.get_sentence_embedding_dimension()
+        # Calculate embedding dim
+        try:
+            sample = self.sbert.encode("hello world", convert_to_tensor=True)
+            embedding_dim = sample.shape[-1]
+        except Exception:
+            embedding_dim = 384
+            
         self.moe_head = MoEClassifier(
-            input_dim=embedding_dim,
-            num_classes=num_classes,
-            num_experts=num_experts,
+            input_dim=embedding_dim, 
+            num_classes=num_classes, 
+            num_experts=num_experts, 
+            expert_hidden_dim=expert_hidden_dim, 
             top_k=top_k
         )
         
-        # Force MoE head to same device
-        self.moe_head.to(target_device)
+        if device is not None:
+            self.to(device)
 
     def forward(self, text_input):
+        # NOTE: In the notebook, features are detached to freeze backbone initially.
+        # This behavior is largely controlled by the LightningModule optimizer logic,
+        # but to match notebook exactly, we treat encode as 'frozen' features usually.
         features = self.sbert.encode(text_input, convert_to_tensor=True)
-        features = features.clone().detach() 
+        
+        # Ensure tensor on same device as head
+        head_device = next(self.moe_head.parameters()).device
+        features = features.to(head_device)
+        
         logits, router_logits = self.moe_head(features)
         return logits, router_logits
