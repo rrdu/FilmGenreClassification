@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
-# test_multilabel.py
+# -*- coding: utf-8 -*-
 """
-Multilabel test script.
-Saves per-class metrics CSV, confusion matrices, and advanced visualizations 
-(ROC, PR Curves, Heatmaps, Jaccard) into output_dir/name/.
+test.py - find best checkpoint and run multilabel evaluation.
+
+Key Features:
+- Automatically picks best checkpoint from local directory.
+- Computes per-class metrics and confusion matrices.
+- Generates advanced visualizations (ROC, PR Curves, Heatmaps, Jaccard).
+
+Usage:
+    python test.py --data_dir ../data/imdb_arh_trimmed --test_file imdb_arh_test.csv
 """
 import os
 import argparse
@@ -37,6 +43,7 @@ from sklearn.metrics import (
 from utils.module import MoE_LightningModule, IMDBDataset
 from layers.moe import SBERT_MoE_Model
 
+
 def pick_best_local_checkpoint(checkpoints_root="checkpoints/multilabel"):
     root = Path(checkpoints_root)
     if not root.exists():
@@ -63,6 +70,7 @@ def pick_best_local_checkpoint(checkpoints_root="checkpoints/multilabel"):
                 
     return str(best_path)
 
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--name", type=str, default=f"test_{int(time.time())}")
@@ -75,7 +83,8 @@ def parse_args():
     parser.add_argument("--threshold", type=float, default=0.5, help="sigmoid threshold for deciding positives")
     return parser.parse_args()
 
-if __name__ == "__main__":
+
+def main():
     args = parse_args()
 
     CHECKPOINT_PATH = args.checkpoint_path or pick_best_local_checkpoint("checkpoints/multilabel")
@@ -387,3 +396,6 @@ if __name__ == "__main__":
     print(f"Saved summary to {run_dir / 'summary.json'}")
 
     print("Done.")
+
+if __name__ == "__main__":
+    main()

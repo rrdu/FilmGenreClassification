@@ -12,6 +12,7 @@ Key Features:
 Usage:
   python test.py --name myrun --data_dir ../data/imdb_arh_synthetic --checkpoint_path checkpoints/...
 """
+import os
 import argparse
 import re
 from pathlib import Path
@@ -20,6 +21,7 @@ import numpy as np
 import pandas as pd
 import json
 import matplotlib.pyplot as plt
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 import torch
 from torch.utils.data import DataLoader
@@ -35,9 +37,9 @@ from torchmetrics.classification import (
     MulticlassPrecision,
     MulticlassRecall,
     MulticlassAccuracy,
-    MulticlassMatthewsCorrCoef,  # <--- NEW
-    MulticlassCohenKappa,        # <--- NEW
-    MulticlassCalibrationError   # <--- NEW (Optional, checks confidence)
+    MulticlassMatthewsCorrCoef,
+    MulticlassCohenKappa,
+    MulticlassCalibrationError
 )
 from sklearn.metrics import (
     classification_report,
@@ -49,7 +51,7 @@ from sklearn.metrics import (
 from utils.module import MoE_LightningModule, IMDBDataset
 from layers.encoder import SBERT_MoE_Model
 
-# ---------------------------------------------------------------------
+
 def pick_best_local_checkpoint(checkpoints_root="checkpoints/multiclass"):
     root = Path(checkpoints_root)
     ckpt_paths = list(root.rglob("*.ckpt"))
@@ -65,7 +67,7 @@ def pick_best_local_checkpoint(checkpoints_root="checkpoints/multiclass"):
             best_path = p
     return str(best_path)
 
-# ---------------------------------------------------------------------
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--name", type=str, default=f"test_{int(time.time())}", help="Name for this test run (subfolder)")
@@ -77,8 +79,8 @@ def parse_args():
     parser.add_argument("--output_dir", type=str, default="test_outputs", help="Directory to write outputs into")
     return parser.parse_args()
 
-# ---------------------------------------------------------------------
-if __name__ == "__main__":
+
+def main():
     args = parse_args()
 
     # resolve checkpoint
@@ -181,24 +183,13 @@ if __name__ == "__main__":
     loaded_model.eval()
 
     metrics = MetricCollection({
-        # Standard Micro Accuracy
         "accuracy": MulticlassAccuracy(num_classes=num_classes, average="micro"),
-        
-        # Top-3 Accuracy (Did the model get it right in the top 3 guesses?)
         "accuracy_top3": MulticlassAccuracy(num_classes=num_classes, top_k=3),
-        
-        # Balanced Accuracy (Average of Recall per class - good for imbalance)
         "accuracy_balanced": MulticlassAccuracy(num_classes=num_classes, average="macro"),
-
-        # Macro Metrics (Treats all classes equally)
         "f1_macro": MulticlassF1Score(num_classes=num_classes, average="macro"),
         "precision_macro": MulticlassPrecision(num_classes=num_classes, average="macro"),
         "recall_macro": MulticlassRecall(num_classes=num_classes, average="macro"),
-        
-        # Weighted Metrics (Weighted by class size)
         "f1_weighted": MulticlassF1Score(num_classes=num_classes, average="weighted"),
-        
-        # Advanced Statistical Metrics
         "mcc": MulticlassMatthewsCorrCoef(num_classes=num_classes),
         "cohen_kappa": MulticlassCohenKappa(num_classes=num_classes)
     }).to(device)
@@ -298,7 +289,7 @@ if __name__ == "__main__":
     pd.DataFrame(cm_norm, index=CLASS_NAMES, columns=CLASS_NAMES).to_csv(cm_norm_path)
     print(f"Saved normalized confusion matrix to {cm_norm_path.resolve()}")
 
-# Convert tensor metrics to python floats
+    # Convert tensor metrics to python floats
     metrics_dict = {k: float(v.item()) for k, v in final_results.items()}
 
     # Save summary JSON (Enhanced structure)
@@ -327,3 +318,7 @@ if __name__ == "__main__":
     print(f"Saved extended summary to {summary_path.resolve()}")
 
     print("\nDone.")
+    
+
+if __name__ == "__main__":
+    main()

@@ -34,10 +34,6 @@ class MoE_LightningModule(pl.LightningModule):
     ):
         super().__init__()
         self.save_hyperparameters(ignore=['model'])
-        
-        # FIX: Do not assign self.model = model. 
-        # This prevents parameters from being nested under "model." prefix.
-        # We extract parts directly to match standard checkpoint keys (backbone.*, head.*).
         self.backbone = getattr(model, "sbert", None)
         self.head = getattr(model, "moe_head", None)
 
@@ -50,7 +46,7 @@ class MoE_LightningModule(pl.LightningModule):
         self.threshold = threshold
         self.weight_decay = weight_decay
         self.finetune_backbone = finetune_backbone
-        self.num_experts = num_experts # Saved for logging if needed
+        self.num_experts = num_experts
 
         # --- Loss Function ---
         if pos_weight is not None:
@@ -140,9 +136,7 @@ class MoE_LightningModule(pl.LightningModule):
             }
         }
 
-# ---------------------------
-# Dataset utility (Unchanged from your upload, included for completeness)
-# ---------------------------
+
 class IMDBDataset(Dataset):
     def __init__(self, data_dir_path, filename, class_names=None, text_col='description', label_col='genre_list', multilabel=True):
         super().__init__()

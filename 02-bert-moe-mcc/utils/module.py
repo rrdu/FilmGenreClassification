@@ -24,7 +24,6 @@ class MoE_LightningModule(pl.LightningModule):
 
         # Initialize class weights if provided
         if class_weights is not None:
-            # convert list or tensor to a tensor on correct device later
             self.register_buffer("class_weights", torch.tensor(class_weights, dtype=torch.float))
             self.criterion = nn.CrossEntropyLoss(weight=self.class_weights)
         else:
@@ -86,15 +85,12 @@ class MoE_LightningModule(pl.LightningModule):
         self.log("val_loss", loss, prog_bar=True, on_step=False, on_epoch=True)
         self.log("val_acc", acc_val, prog_bar=True, on_step=False, on_epoch=True)
 
-    # def configure_optimizers(self):
-    #     return torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
-
     def configure_optimizers(self):
         """
         AdamW optimizer + Hugging Face Transformers linear warmup/decay scheduler.
         Requires `transformers` to be installed.
         """
-        # 1️⃣ Parameter groups with weight decay
+        # parameter groups for weight decay
         no_decay = ["bias", "LayerNorm.weight"]
         wd_params, no_wd_params = [], []
         for name, param in self.named_parameters():
@@ -113,19 +109,19 @@ class MoE_LightningModule(pl.LightningModule):
             lr=self.learning_rate,
         )
 
-        # 2️⃣ Compute warmup/total steps using Lightning’s trainer
+        # Compute warmup/total steps using Lightning’s trainer
         total_steps = getattr(self.trainer, "estimated_stepping_batches", 10000)
         warmup_frac = float(self.hparams.get("warmup_frac", 0.1)) if hasattr(self, "hparams") else 0.1
         num_warmup_steps = int(total_steps * warmup_frac)
 
-        # 3️⃣ Create scheduler
+        # Create scheduler
         scheduler = get_linear_schedule_with_warmup(
             optimizer,
             num_warmup_steps=num_warmup_steps,
             num_training_steps=total_steps,
         )
 
-        # 4️⃣ Return optimizer + scheduler dict
+        # Return optimizer + scheduler dict
         return {
             "optimizer": optimizer,
             "lr_scheduler": {

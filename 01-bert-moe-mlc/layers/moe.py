@@ -12,7 +12,7 @@ class Expert(nn.Module):
         self.net = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
-            nn.GELU(),  # Notebook uses GELU, script used SiLU
+            nn.SiLU(), 
             nn.Dropout(dropout),
             nn.Linear(hidden_dim, output_dim)
         )
@@ -62,7 +62,6 @@ class MoEClassifier(nn.Module):
         router_probs, expert_indices, router_logits = self.router(x)
         
         # Output container
-        # We look at the first expert to determine output size (num_classes)
         final_output = torch.zeros(batch_size, self.experts[0].net[-1].out_features, device=x.device)
         
         # Iterate through each k-th selected expert
@@ -111,9 +110,6 @@ class SBERT_MoE_Model(nn.Module):
             self.to(device)
 
     def forward(self, text_input):
-        # NOTE: In the notebook, features are detached to freeze backbone initially.
-        # This behavior is largely controlled by the LightningModule optimizer logic,
-        # but to match notebook exactly, we treat encode as 'frozen' features usually.
         features = self.sbert.encode(text_input, convert_to_tensor=True)
         
         # Ensure tensor on same device as head

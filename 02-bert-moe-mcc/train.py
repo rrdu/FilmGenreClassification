@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
 train.py — Training entrypoint with WandB sweep support.
 
@@ -19,6 +18,7 @@ import time
 import numpy as np
 import pandas as pd
 from pathlib import Path
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 import wandb
 import torch

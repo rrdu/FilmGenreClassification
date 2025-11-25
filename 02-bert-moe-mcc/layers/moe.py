@@ -57,14 +57,13 @@ class MoEClassifier(nn.Module):
         
         for k in range(self.top_k):
             selected_experts = expert_indices[:, k]
-            gate_weight = router_probs[:, k].unsqueeze(1)  # (B,1)
+            gate_weight = router_probs[:, k].unsqueeze(1)
             
             for expert_idx in range(self.num_experts):
                 mask = (selected_experts == expert_idx)
                 if mask.any():
                     expert_input = x[mask]
                     expert_output = self.experts[expert_idx](expert_input)
-                    # gate_weight[mask] has shape (n_selected, 1)
                     final_output[mask] += gate_weight[mask] * expert_output
                     
         return final_output, router_logits

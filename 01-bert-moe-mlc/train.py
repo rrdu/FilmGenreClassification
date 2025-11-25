@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
-# train.py
+# -*- coding: utf-8 -*-
 """
-Multilabel training script.
-Saves best checkpoint under checkpoints/multilabel/<run_id>/ and logs to wandb if requested.
+train.py - Training entrypoint with WandB sweep support.
+
+Key Features:
+- Supports warmup scheduler.
+- Saves checkpoints to checkpoints/multilabel/<run_id>/.
+- Retains only the best checkpoint (save_top_k=1).
+
+Usage:
+    python train.py --data_dir ../data/imdb_arh_trimmed --train_file imdb_arh_train.csv --val_file imdb_arh_val.csv
 """
 import os
 import argparse
@@ -54,7 +61,6 @@ def parse_args():
     parser.add_argument("--no_pos_weight", action="store_true", help="Disable class balancing weights")
     parser.add_argument("--finetune_backbone", type=int, default=0, help="0=Freeze SBERT, 1=Finetune SBERT")
     parser.add_argument("--threshold", type=float, default=0.3, help="Decision threshold for multilabel (Default: 0.3)")
-    
     return parser.parse_args()
 
 
