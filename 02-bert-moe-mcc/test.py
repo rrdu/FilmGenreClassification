@@ -5,12 +5,7 @@
 test.py — finds a checkpoint (or uses provided one), reconstructs the model from checkpoint hparams/state,
 evaluates on a specified test dataset, and writes per-class CSV + confusion matrix figure into an output folder.
 
-Key Features:
-- Automatically picks the best local checkpoint if none is provided.
-- Computes detailed per-class metrics and confusion matrix.
-
-Usage:
-  python test.py --name myrun --data_dir ../data/imdb_arh_synthetic --checkpoint_path checkpoints/...
+Note: you can pass --text_col and --label_col to adapt to different CSV schemas (e.g. synthetic dataset).
 """
 import os
 import argparse
@@ -38,8 +33,7 @@ from torchmetrics.classification import (
     MulticlassRecall,
     MulticlassAccuracy,
     MulticlassMatthewsCorrCoef,
-    MulticlassCohenKappa,
-    MulticlassCalibrationError
+    MulticlassCohenKappa
 )
 from sklearn.metrics import (
     classification_report,
@@ -76,18 +70,28 @@ def parse_args():
     parser.add_argument("--test_file", type=str, default="imdb_arh_test.csv", help="Test CSV filename")
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--checkpoint_path", type=str, default=None, help="Path to checkpoint .ckpt file; if omitted the best local is used")
+    parser.add_argument("--checkpoint_dir", type=str, default="checkpoints/multiclass", help="Root checkpoint dir to pick best local checkpoint from (if checkpoint_path omitted)")
     parser.add_argument("--output_dir", type=str, default="test_outputs", help="Directory to write outputs into")
+
+    # New schema args
+    parser.add_argument("--text_col", type=str, default="description", help="Column name for text in CSV")
+    parser.add_argument("--label_col", type=str, default="csv_genre", help="Column name for label in CSV")
+    parser.add_argument("--multilabel", action="store_true", help="Set if labels are multi-label (NOT supported by current IMDBDataset implementation)")
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
 
+    if args.multilabel:
+        # current IMDBDataset implementation (module.IMDBDataset) supports single-label classification only.
+        print("⚠️  Warning: --multilabel was set but current IMDBDataset implementation expects single-label data. Proceeding as single-label.")
+
     # resolve checkpoint
     if args.checkpoint_path:
         CHECKPOINT_PATH = args.checkpoint_path
     else:
-        CHECKPOINT_PATH = pick_best_local_checkpoint("checkpoints/multiclass")
+        CHECKPOINT_PATH = pick_best_local_checkpoint(args.checkpoint_dir)
     print(f"✅ Using checkpoint: {CHECKPOINT_PATH}")
 
     # dataset & loader
@@ -96,11 +100,14 @@ def main():
     TEST_FILE = args.test_file
     BATCH_SIZE = args.batch_size
 
-    CLASS_NAMES = IMDBDataset.discover_classes(DATA_DIR, TRAIN_FILE)
+    # discover classes using provided label column
+    CLASS_NAMES = IMDBDataset.discover_classes(DATA_DIR, TRAIN_FILE, label_col=args.label_col)
     print(f"Loaded {len(CLASS_NAMES)} classes: {CLASS_NAMES}")
 
-    tr_ds = IMDBDataset(data_dir_path=DATA_DIR, filename=TRAIN_FILE, class_names=CLASS_NAMES)
-    te_ds = IMDBDataset(data_dir_path=DATA_DIR, filename=TEST_FILE, class_names=CLASS_NAMES)
+    tr_ds = IMDBDataset(data_dir_path=DATA_DIR, filename=TRAIN_FILE, class_names=CLASS_NAMES,
+                        text_col=args.text_col, label_col=args.label_col)
+    te_ds = IMDBDataset(data_dir_path=DATA_DIR, filename=TEST_FILE, class_names=CLASS_NAMES,
+                        text_col=args.text_col, label_col=args.label_col)
     te_loader = DataLoader(te_ds, batch_size=BATCH_SIZE, shuffle=False)
 
     num_classes = len(CLASS_NAMES)
@@ -297,7 +304,6 @@ def main():
         "run_name": args.name,
         "checkpoint": str(CHECKPOINT_PATH),
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-        # Create a dedicated 'overall_performance' key for quick parsing
         "overall_performance": {
             "accuracy": metrics_dict.get("accuracy"),
             "balanced_accuracy": metrics_dict.get("accuracy_balanced"),
@@ -311,14 +317,14 @@ def main():
         "class_names": CLASS_NAMES,
         "hparams": hparams if hparams else {},
     }
-    
+
     summary_path = run_dir / "summary.json"
     with open(summary_path, "w") as fh:
         json.dump(summary, fh, indent=2)
     print(f"Saved extended summary to {summary_path.resolve()}")
 
     print("\nDone.")
-    
+
 
 if __name__ == "__main__":
     main()

@@ -3,13 +3,8 @@
 """
 train.py — Training entrypoint with WandB sweep support.
 
-Key Features:
-- Supports warmup scheduler.
-- Saves checkpoints to checkpoints/multiclass/<run_id>/.
-- Retains only the best checkpoint (save_top_k=1).
-
-Usage:
-    python train.py --data_dir ../data/imdb_arh_trimmed --train_file imdb_arh_train.csv --val_file imdb_arh_val.csv
+Now supports different CSV schemas via --text_col and --label_col, and lets you choose
+a checkpoint subdirectory (e.g. 'synthetic_multiclass') to store checkpoints under checkpoints/<subdir>/<run_id>/.
 """
 import os
 import argparse
@@ -65,12 +60,20 @@ def parse_args():
     parser.add_argument("--encoder_emb_dim", type=int, default=None)
     parser.add_argument("--warmup_frac", type=float, default=None)
     parser.add_argument("--seed", type=int, default=None)
+
+    # New schema args
+    parser.add_argument("--text_col", type=str, default="description", help="Column name for text in CSV")
+    parser.add_argument("--label_col", type=str, default="csv_genre", help="Column name for label in CSV")
+    parser.add_argument("--multilabel", action="store_true", help="Set if dataset is multi-label (NOT supported by current IMDBDataset)")
+
+    # Checkpoint subdir (so synthetic models can be stored separately)
+    parser.add_argument("--checkpoint_subdir", type=str, default="multiclass", help="Subdir under checkpoints/ to save model (e.g. synthetic_multiclass)")
+
     return parser.parse_args()
 
 
 def main():
     # --------- Configuration ----------
-
     args = parse_args()
 
     # If running under a sweep, wandb.agent will call this script and set wandb.config.
@@ -113,27 +116,39 @@ def main():
 
     seed_everything(seed)
 
-    # Fetch data and discover classes
+    # Fetch data and discover classes using args.label_col
     data_dir = Path(args.data_dir)
     train_path = data_dir / args.train_file
     val_path = data_dir / args.val_file
     if not train_path.exists() or not val_path.exists():
         raise FileNotFoundError("Train/Val files not found under data_dir")
 
-    CLASS_NAMES = IMDBDataset.discover_classes(data_dir, args.train_file)
+    CLASS_NAMES = IMDBDataset.discover_classes(data_dir, args.train_file, label_col=args.label_col)
     num_classes = len(CLASS_NAMES)
     print(f"Discovered {num_classes} classes: {CLASS_NAMES}")
 
-    # Build vocab texts and label weights for tokenizer
+    # Build vocab texts and label weights for tokenizer using args.text_col and args.label_col
     train_df = pd.read_csv(train_path)
-    vocab_texts = train_df["description"].fillna("").astype(str).tolist()
-    class_counts = train_df['csv_genre'].value_counts().sort_index()
-    weights = 1.0 / (class_counts / class_counts.sum())  # inverse frequency
+    if args.text_col not in train_df.columns:
+        raise ValueError(f"text_col '{args.text_col}' not found in train CSV columns: {list(train_df.columns)}")
+    if args.label_col not in train_df.columns:
+        raise ValueError(f"label_col '{args.label_col}' not found in train CSV columns: {list(train_df.columns)}")
+
+    vocab_texts = train_df[args.text_col].fillna("").astype(str).tolist()
+
+    # Compute class weights robustly; support single-label only (current IMDBDataset)
+    if args.multilabel:
+        print("⚠️  --multilabel requested but current IMDBDataset implementation expects single-label classification. Proceeding with single-label logic.")
+    class_counts = train_df[args.label_col].fillna("UNKNOWN").astype(str).value_counts().sort_index()
+    # Align counts with CLASS_NAMES (sorted)
+    counts_aligned = [class_counts.get(cls, 0) for cls in CLASS_NAMES]
+    counts_arr = np.array(counts_aligned, dtype=np.float32)
+    # avoid zero-division
+    counts_arr[counts_arr == 0] = 1.0
+    weights = 1.0 / (counts_arr / counts_arr.sum())  # inverse frequency
     weights = (weights / weights.sum()).tolist()
 
     # --------- Model ----------
-
-    # Prepare model
     encoder_kwargs = dict(
         emb_dim=encoder_emb_dim,
         n_layers=3,
@@ -188,21 +203,24 @@ def main():
         "warmup_frac": warmup_frac,
         "max_epochs": max_epochs,
         "class_weights": weights if 'weights' in locals() else None,
+        "text_col": args.text_col,
+        "label_col": args.label_col,
+        "multilabel": bool(args.multilabel),
     }
 
     for k, v in _arch_hparams.items():
         if v is not None:
             _safe_set_hparam(pl_module, k, v)
 
-    # Datasets and dataloaders
-    tr_ds = IMDBDataset(data_dir_path=data_dir, filename=args.train_file, class_names=CLASS_NAMES)
-    va_ds = IMDBDataset(data_dir_path=data_dir, filename=args.val_file, class_names=CLASS_NAMES)
+    # Datasets and dataloaders passing text/label col args
+    tr_ds = IMDBDataset(data_dir_path=data_dir, filename=args.train_file, class_names=CLASS_NAMES,
+                        text_col=args.text_col, label_col=args.label_col)
+    va_ds = IMDBDataset(data_dir_path=data_dir, filename=args.val_file, class_names=CLASS_NAMES,
+                        text_col=args.text_col, label_col=args.label_col)
     tr_loader = DataLoader(tr_ds, batch_size=batch_size, num_workers=args.num_workers, shuffle=True)
     va_loader = DataLoader(va_ds, batch_size=batch_size, num_workers=args.num_workers, shuffle=False)
 
     # --------- callbacks & logging ----------
-
-    # Early stopping callback
     early_stop_cb = EarlyStopping(
         monitor="val_acc",
         min_delta=0.0,
@@ -211,30 +229,27 @@ def main():
         mode="max"
     )
 
-    # Checkpointing callback
+    # Checkpointing callback: use checkpoint_subdir so synthetic vs normal are separable
     run_id = None
     if run is not None:
-        # W&B run id is unique; sanitize for filesystem
         run_id = str(run.id).replace("/", "-")
     else:
         run_id = f"local-{int(time.time())}"
-    ckpt_dir = Path("checkpoints") / "multiclass" / run_id
+
+    ckpt_dir = Path("checkpoints") / args.checkpoint_subdir / run_id
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
 
     checkpoint_cb = ModelCheckpoint(
         dirpath=str(ckpt_dir),
         filename=f"{run_id}-moe-{{epoch:02d}}-{{val_acc:.3f}}",
         monitor="val_acc",
         mode="max",
-        save_top_k=1,    # keep only the best checkpoint for this run
+        save_top_k=1,
         save_last=False,
     )
 
-    # WandB logger (log_model=True allows retrieving model artifact from W&B if needed)
     wandb_logger = WandbLogger(project=config.get("project", args.project), name=None, log_model=True) if (run is not None or args.wandb_run) else None
 
-    # --------- Training ----------
-
-    # Trainer
     trainer = pl.Trainer(
         max_epochs=max_epochs,
         accelerator="auto",
@@ -259,6 +274,9 @@ def main():
         "warmup_frac": warmup_frac,
         "max_epochs": max_epochs,
         "ckpt_dir": str(ckpt_dir),
+        "text_col": args.text_col,
+        "label_col": args.label_col,
+        "multilabel": args.multilabel,
     })
 
     trainer.fit(pl_module, train_dataloaders=tr_loader, val_dataloaders=va_loader)

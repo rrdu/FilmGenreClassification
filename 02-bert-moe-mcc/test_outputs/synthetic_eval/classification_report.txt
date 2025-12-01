@@ -1,0 +1,9 @@
+              precision    recall  f1-score   support
+
+      action     0.9679    0.9637    0.9658      3000
+      horror     0.9687    0.9710    0.9699      3000
+     romance     0.9664    0.9683    0.9674      3000
+
+    accuracy                         0.9677      9000
+   macro avg     0.9677    0.9677    0.9677      9000
+weighted avg     0.9677    0.9677    0.9677      9000

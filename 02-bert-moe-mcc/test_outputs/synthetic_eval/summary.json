@@ -1,0 +1,53 @@
+{
+  "run_name": "synthetic_eval",
+  "checkpoint": "checkpoints/synthetic_multiclass/local-1764604528/local-1764604528-moe-epoch=09-val_acc=0.966.ckpt",
+  "timestamp": "2025-12-01 11:03:58",
+  "overall_performance": {
+    "accuracy": 0.9676666855812073,
+    "balanced_accuracy": 0.9676666259765625,
+    "f1_macro": 0.9676644802093506,
+    "f1_weighted": 0.9676645994186401,
+    "mcc": 0.95150226354599,
+    "top_3_acc": 0.9676666259765625
+  },
+  "all_metrics": {
+    "accuracy": 0.9676666855812073,
+    "accuracy_balanced": 0.9676666259765625,
+    "accuracy_top3": 0.9676666259765625,
+    "cohen_kappa": 0.9514999985694885,
+    "f1_macro": 0.9676644802093506,
+    "f1_weighted": 0.9676645994186401,
+    "mcc": 0.95150226354599,
+    "precision_macro": 0.9676669836044312,
+    "recall_macro": 0.9676666259765625
+  },
+  "num_classes": 3,
+  "class_names": [
+    "action",
+    "horror",
+    "romance"
+  ],
+  "hparams": {
+    "num_classes": 3,
+    "num_experts": 8,
+    "learning_rate": 0.0003,
+    "aux_loss_weight": 0.01,
+    "class_weights": [
+      0.3333333432674408,
+      0.3333333432674408,
+      0.3333333432674408
+    ],
+    "expert_hidden_dim": 128,
+    "top_k": 2,
+    "encoder_emb_dim": 256,
+    "encoder_n_layers": 3,
+    "encoder_n_heads": 4,
+    "encoder_ff_dim": 512,
+    "batch_size": 64,
+    "warmup_frac": 0.1,
+    "max_epochs": 10,
+    "text_col": "synopsis",
+    "label_col": "genre",
+    "multilabel": false
+  }
+}
