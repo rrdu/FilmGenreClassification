@@ -14,11 +14,11 @@ from sklearn.metrics import(
 # Evaluation function (label-agnostic)
 # ---------------------------------------------------------------------------
 def evaluate_predictions(
-    y_true: Sequence[str],
-    y_pred: Sequence[str],
-    genre_names: List[str] | None=None,
-    average: str='macro',
-    verbose: bool=True
+    y_true,
+    y_pred,
+    genre_names,
+    average,
+    verbose
 ):
     '''
     Evaluate classification predictions with:
@@ -79,11 +79,11 @@ def evaluate_predictions(
 # ---------------------------------------------------------------------------
 def evaluate_model(
     model,
-    X: Sequence[str],
-    y: Sequence[str],
-    genre_names: List[str] | None=None,
-    average: str='macro',
-    verbose: bool=True
+    X,
+    y,
+    genre_names,
+    average,
+    verbose
 ):
     '''
     For a model with a batch_predict method,
