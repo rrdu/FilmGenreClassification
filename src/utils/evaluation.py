@@ -6,7 +6,8 @@ from typing import Dict, List, Sequence
 from sklearn.metrics import(
     accuracy_score,
     precision_recall_fscore_support,
-    classification_report
+    classification_report,
+    jaccard_score
 )
 
 # ---------------------------------------------------------------------------
@@ -185,3 +186,108 @@ def misclassification_report(
             # if you want probs too, use predict_topk_with_proba instead
             print(f"  {rank}. {tag}")
     print()
+# ---------------------------------------------------------------------------
+# Evaluation function for multilabel
+# ---------------------------------------------------------------------------
+def evaluate_multilabel_predictions(
+    y_true_bin,
+    y_pred_bin,
+    label_names,
+    average: str = "micro",
+    verbose: bool = True,
+):
+    """
+    Evaluate multilabel predictions.
+
+    y_true_bin, y_pred_bin : array-like of shape [n_samples, n_labels]
+    label_names            : list[str] in the same order as columns
+    average                : 'micro', 'macro', or 'weighted' for P/R/F1
+    """
+
+    # Subset accuracy: exact match of the whole label set
+    acc = accuracy_score(y_true_bin, y_pred_bin)
+
+    prec, rec, f1, _ = precision_recall_fscore_support(
+        y_true_bin,
+        y_pred_bin,
+        average=average,
+        zero_division=0,
+    )
+
+    jacc = jaccard_score(
+        y_true_bin,
+        y_pred_bin,
+        average="micro",
+    )
+
+    if verbose:
+        print("============================================================")
+        print("Multilabel overall performance")
+        print("------------------------------------------------------------")
+        print(f"Subset Accuracy:    {acc:.4f}")
+        print(f"Precision ({average}): {prec:.4f}")
+        print(f"Recall    ({average}): {rec:.4f}")
+        print(f"F1        ({average}): {f1:.4f}")
+        print(f"Jaccard (micro):    {jacc:.4f}")
+        print()
+        print("Per-label metrics")
+        print("------------------------------------------------------------")
+        print(
+            classification_report(
+                y_true_bin,
+                y_pred_bin,
+                target_names=label_names,
+                zero_division=0,
+            )
+        )
+        print("============================================================")
+        print()
+
+    return {
+        "subset_accuracy": acc,
+        f"precision_{average}": prec,
+        f"recall_{average}": rec,
+        f"f1_{average}": f1,
+        "jaccard_micro": jacc,
+    }
+
+# ---------------------------------------------------------------------------
+# Evaluation function for multilabel
+# ---------------------------------------------------------------------------
+def evaluate_multilabel_model(
+    model,
+    X_raw,
+    Y_true_sets,
+    label_names,
+    mlb,
+    threshold: float = 0.5,
+    average: str = "micro",
+    verbose: bool = True,
+):
+    """
+    Convenience wrapper for multilabel models.
+
+    model        : has `predict` or `predict_proba` for raw texts
+    X_raw        : list[str] synopses
+    Y_true_sets  : list[set/list] of true labels per sample
+    label_names  : list of label strings (same order as mlb.classes_)
+    mlb          : fitted MultiLabelBinarizer
+    """
+
+    # Convert true sets to binary matrix
+    y_true_bin = mlb.transform(Y_true_sets)
+
+    # Get binary predictions from the model
+    # (for MultilabelNaiveBayes, `predict` already returns binary matrix)
+    if hasattr(model, "predict"):
+        y_pred_bin = model.predict(X_raw, threshold=threshold)
+    else:
+        raise ValueError("Model must implement a `predict` method for multilabel evaluation.")
+
+    return evaluate_multilabel_predictions(
+        y_true_bin=y_true_bin,
+        y_pred_bin=y_pred_bin,
+        label_names=label_names,
+        average=average,
+        verbose=verbose,
+    )
