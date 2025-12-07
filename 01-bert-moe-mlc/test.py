@@ -7,6 +7,8 @@ Key Features:
 - Automatically picks best checkpoint from local directory.
 - Computes per-class metrics and confusion matrices.
 - Generates advanced visualizations (ROC, PR Curves, Heatmaps, Jaccard).
+- Calculates Subset Accuracy (Exact Match).
+- Calculates Top-K Metrics (Precision@K, Recall@K, Jaccard@K).
 
 Usage:
     python test.py --data_dir ../data/imdb_arh_trimmed --test_file imdb_arh_test.csv
@@ -37,7 +39,8 @@ from sklearn.metrics import (
     average_precision_score, 
     precision_recall_curve, 
     f1_score, 
-    jaccard_score
+    jaccard_score,
+    accuracy_score
 )
 
 from utils.module import MoE_LightningModule, IMDBDataset
@@ -69,6 +72,39 @@ def pick_best_local_checkpoint(checkpoints_root="checkpoints/multilabel"):
                 best_path = p
                 
     return str(best_path)
+
+
+def calculate_metrics_at_k(y_true, y_prob, k):
+    """
+    Computes Precision@k, Recall@k, and Jaccard@k (IoU) for multi-label data.
+    """
+    # Get indices of top k probabilities for each sample
+    # argsort sorts ascending, so we take the last k and reverse them
+    top_k_idx = np.argsort(y_prob, axis=1)[:, -k:][:, ::-1]
+    
+    # Create a binary prediction matrix for top k
+    y_pred_k = np.zeros_like(y_true, dtype=int)
+    for i in range(len(y_true)):
+        y_pred_k[i, top_k_idx[i]] = 1
+        
+    # Intersection (True Positives)
+    tp = np.sum(y_true * y_pred_k, axis=1)
+    
+    # 1. Precision@k = TP / k
+    precision_at_k = tp / k
+    
+    # 2. Recall@k = TP / (Total True Labels)
+    true_counts = np.sum(y_true, axis=1)
+    recall_at_k = np.divide(tp, true_counts, out=np.zeros_like(tp, dtype=float), where=true_counts!=0)
+    
+    # 3. Jaccard@k = TP / (Total True + k - TP)
+    # Union of indices = (set of true) U (set of predicted k)
+    # Size(Union) = Size(True) + Size(Pred_k) - Size(Intersection)
+    # Size(Pred_k) is always k
+    union_counts = true_counts + k - tp
+    jaccard_at_k = np.divide(tp, union_counts, out=np.zeros_like(tp, dtype=float), where=union_counts!=0)
+    
+    return precision_at_k.mean(), recall_at_k.mean(), jaccard_at_k.mean()
 
 
 def parse_args():
@@ -224,8 +260,8 @@ def main():
     }).to_csv(visual_dir / "per_class_auc_ap.csv", index=False)
 
     # 2) Precision-Recall curves for worst classes by AP
-    k = min(12, len(CLASS_NAMES))
-    order = np.argsort(ap_per)[:k]  # worst by AP
+    k_plot = min(12, len(CLASS_NAMES))
+    order = np.argsort(ap_per)[:k_plot]  # worst by AP
     plt.figure(figsize=(10,8))
     for idx in order:
         p, r, _ = precision_recall_curve(y_true[:, idx], y_prob[:, idx])
@@ -306,6 +342,21 @@ def main():
     # STANDARD METRICS & CONFUSION MATRICES
     # =========================================================
     
+    # Calculate Subset Accuracy (Exact Match)
+    subset_acc = accuracy_score(y_true, y_pred)
+    
+    # Calculate Top-K Metrics
+    k_values = [1, 3, 5, 10]
+    top_k_metrics = {}
+    print("\n--- Top-K Metrics ---")
+    for k in k_values:
+        if k > num_classes: continue
+        pk, rk, jk = calculate_metrics_at_k(y_true, y_prob, k)
+        top_k_metrics[f"P@{k}"] = pk
+        top_k_metrics[f"R@{k}"] = rk
+        top_k_metrics[f"Jaccard@{k}"] = jk
+        print(f"k={k}: Precision={pk:.4f}, Recall={rk:.4f}, Jaccard={jk:.4f}")
+
     # Macro / micro average metrics
     precision_macro, recall_macro, f1_macro, _ = precision_recall_fscore_support(
         y_true, y_pred, average='macro', zero_division=0
@@ -315,6 +366,7 @@ def main():
     )
 
     print("\n--- Summary Metrics ---")
+    print(f"Subset Accuracy (Exact Match): {subset_acc:.4f}")
     print("Macro Precision {:.4f} Recall {:.4f} F1 {:.4f}".format(precision_macro, recall_macro, f1_macro))
     print("Micro Precision {:.4f} Recall {:.4f} F1 {:.4f}".format(precision_micro, recall_micro, f1_micro))
 
@@ -380,6 +432,8 @@ def main():
         "run_name": args.name,
         "checkpoint": str(CHECKPOINT_PATH),
         "metrics": {
+            "subset_accuracy": float(subset_acc),
+            "top_k_metrics": top_k_metrics,
             "precision_macro": float(precision_macro),
             "recall_macro": float(recall_macro),
             "f1_macro": float(f1_macro),
